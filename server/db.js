@@ -1,0 +1,344 @@
+const initSqlJs = require('sql.js');
+const fs = require('fs');
+const path = require('path');
+
+const DB_PATH = path.join(__dirname, 'work-tracker.db');
+let db = null;
+let saveTimer = null;
+
+async function initDb() {
+  const SQL = await initSqlJs();
+
+  if (fs.existsSync(DB_PATH)) {
+    const buf = fs.readFileSync(DB_PATH);
+    db = new SQL.Database(buf);
+  } else {
+    db = new SQL.Database();
+  }
+
+  db.run('PRAGMA foreign_keys = ON');
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS employees (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      role TEXT DEFAULT '',
+      group_name TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS objectives (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      employee_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      weight REAL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      objective_id INTEGER,
+      title TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      assignee_id INTEGER,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending','in_progress','completed','overdue')),
+      priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2','P3')),
+      difficulty INTEGER DEFAULT 3 CHECK(difficulty BETWEEN 1 AND 5),
+      estimated_hours REAL DEFAULT 0,
+      deadline TEXT,
+      source TEXT DEFAULT 'manual',
+      confirm_status TEXT DEFAULT 'none' CHECK(confirm_status IN ('none','pending','confirmed','rejected')),
+      confirm_note TEXT DEFAULT '',
+      confirmed_by INTEGER,
+      confirmed_at TEXT,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      completed_at TEXT,
+      FOREIGN KEY (assignee_id) REFERENCES employees(id) ON DELETE SET NULL,
+      FOREIGN KEY (objective_id) REFERENCES objectives(id) ON DELETE SET NULL
+    )
+  `);
+
+  // Migration: add columns if not exist
+  try {
+    const cols = all("PRAGMA table_info(tasks)");
+    const addCol = (name, type, defaultVal) => {
+      if (!cols.some(c => c.name === name)) {
+        db.run(`ALTER TABLE tasks ADD COLUMN ${name} ${type} DEFAULT '${defaultVal}'`);
+      }
+    };
+    addCol('objective_id', 'INTEGER', null);
+    addCol('source', 'TEXT', 'manual');
+    addCol('confirm_status', 'TEXT', 'none');
+    addCol('confirm_note', 'TEXT', '');
+    addCol('confirmed_by', 'INTEGER', null);
+    addCol('confirmed_at', 'TEXT', '');
+    const hasSource = cols.some(c => c.name === 'source');
+    if (!hasSource) {
+      db.run("UPDATE tasks SET source = 'okr'");
+    }
+    saveDbSync();
+  } catch (e) { /* migration already done */ }
+
+  // Migration: ensure daily_logs has all expected columns
+  try {
+    const cols = all("PRAGMA table_info(daily_logs)");
+    const colNames = cols.map(c => c.name);
+    const addCol = (name, type, defaultVal) => {
+      if (!colNames.includes(name)) {
+        db.run(`ALTER TABLE daily_logs ADD COLUMN ${name} ${type} DEFAULT '${defaultVal}'`);
+      }
+    };
+    addCol('progress_percent', 'INTEGER', '0');
+    addCol('priority', 'TEXT', 'P2');
+    addCol('blocker', 'TEXT', '');
+    addCol('dependency_note', 'TEXT', '');
+    addCol('tomorrow_plan', 'TEXT', '');
+    saveDbSync();
+  } catch (e) { /* migration already done */ }
+
+  // Migration: add deliverable_path column to tasks if not exist
+  try {
+    const taskCols = all("PRAGMA table_info(tasks)");
+    const addTaskCol = (name, type, defaultVal) => {
+      if (!taskCols.some(c => c.name === name)) {
+        db.run(`ALTER TABLE tasks ADD COLUMN ${name} ${type} DEFAULT '${defaultVal}'`);
+      }
+    };
+    addTaskCol('deliverable_type', 'TEXT', '');
+    addTaskCol('deliverable_note', 'TEXT', '');
+    saveDbSync();
+  } catch (e) { /* migration already done */ }
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS task_dependencies (
+      task_id INTEGER NOT NULL,
+      depends_on_task_id INTEGER NOT NULL,
+      PRIMARY KEY (task_id, depends_on_task_id),
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (depends_on_task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS daily_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      employee_id INTEGER NOT NULL,
+      date TEXT NOT NULL,
+      task_id INTEGER,
+      work_content TEXT DEFAULT '',
+      hours REAL DEFAULT 0,
+      progress_percent INTEGER DEFAULT 0 CHECK(progress_percent BETWEEN 0 AND 100),
+      priority TEXT DEFAULT 'P2',
+      blocker TEXT DEFAULT '',
+      dependency_note TEXT DEFAULT '',
+      tomorrow_plan TEXT DEFAULT '',
+      remark TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+    )
+  `);
+
+  // 交付物表
+  db.run(`
+    CREATE TABLE IF NOT EXISTS deliverables (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER,
+      employee_id INTEGER,
+      title TEXT NOT NULL,
+      file_name TEXT DEFAULT '',
+      file_path TEXT DEFAULT '',
+      file_type TEXT DEFAULT '',
+      file_size INTEGER DEFAULT 0,
+      description TEXT DEFAULT '',
+      confirm_status TEXT DEFAULT 'none' CHECK(confirm_status IN ('none','pending','confirmed','rejected')),
+      confirm_note TEXT DEFAULT '',
+      confirmed_by INTEGER,
+      confirmed_at TEXT,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
+      FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE SET NULL
+    )
+  `);
+
+  // 交付物文件存放目录
+  const uploadsDir = path.join(__dirname, 'uploads');
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT DEFAULT 'employee' CHECK(role IN ('admin', 'employee')),
+      employee_id INTEGER,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE SET NULL
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS weekly_scores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      employee_id INTEGER NOT NULL,
+      week_start TEXT NOT NULL,
+      week_end TEXT NOT NULL,
+      completion_rate_score REAL DEFAULT 0,
+      ontime_rate_score REAL DEFAULT 0,
+      workload_score REAL DEFAULT 0,
+      total_score REAL DEFAULT 0,
+      auto_comment TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Migration: add confirm fields to deliverables
+  try {
+    const cols = all("PRAGMA table_info(deliverables)");
+    const colNames = cols.map(c => c.name);
+    if (!colNames.includes('confirm_status')) {
+      db.run("ALTER TABLE deliverables ADD COLUMN confirm_status TEXT DEFAULT 'none'");
+    }
+    if (!colNames.includes('confirm_note')) {
+      db.run("ALTER TABLE deliverables ADD COLUMN confirm_note TEXT DEFAULT ''");
+    }
+    if (!colNames.includes('confirmed_by')) {
+      db.run("ALTER TABLE deliverables ADD COLUMN confirmed_by INTEGER DEFAULT NULL");
+    }
+    if (!colNames.includes('confirmed_at')) {
+      db.run("ALTER TABLE deliverables ADD COLUMN confirmed_at TEXT DEFAULT ''");
+    }
+    saveDbSync();
+  } catch (e) { /* migration already done */ }
+
+  // Phase 3.1: Add database indexes for performance
+  const indexes = [
+    'CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id)',
+    'CREATE INDEX IF NOT EXISTS idx_tasks_objective ON tasks(objective_id)',
+    'CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)',
+    'CREATE INDEX IF NOT EXISTS idx_tasks_deadline ON tasks(deadline)',
+    'CREATE INDEX IF NOT EXISTS idx_tasks_confirm_status ON tasks(confirm_status)',
+    'CREATE INDEX IF NOT EXISTS idx_daily_logs_employee_date ON daily_logs(employee_id, date)',
+    'CREATE INDEX IF NOT EXISTS idx_daily_logs_task ON daily_logs(task_id)',
+    'CREATE INDEX IF NOT EXISTS idx_deliverables_task ON deliverables(task_id)',
+    'CREATE INDEX IF NOT EXISTS idx_deliverables_employee ON deliverables(employee_id)',
+    'CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)',
+    'CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)',
+    'CREATE INDEX IF NOT EXISTS idx_objectives_employee ON objectives(employee_id)',
+    'CREATE INDEX IF NOT EXISTS idx_weekly_scores_employee_week ON weekly_scores(employee_id, week_start)',
+    'CREATE INDEX IF NOT EXISTS idx_users_employee ON users(employee_id)',
+  ];
+  for (const idx of indexes) {
+    try { db.run(idx); } catch (e) { /* index already exists */ }
+  }
+
+  saveDbSync();
+  return db;
+}
+
+// Synchronous save (used during init/migration and shutdown)
+function saveDbSync() {
+  if (db) {
+    const data = db.export();
+    const buffer = Buffer.from(data);
+    fs.writeFileSync(DB_PATH, buffer);
+  }
+}
+
+// Phase 3.7: Debounced save - coalesces writes within 1 second
+function saveDb() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveDbSync();
+    saveTimer = null;
+  }, 1000);
+}
+
+// Ensure data is saved on process exit
+function flushDb() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  saveDbSync();
+}
+
+process.on('SIGINT', () => { flushDb(); process.exit(0); });
+process.on('SIGTERM', () => { flushDb(); process.exit(0); });
+process.on('beforeExit', flushDb);
+process.on('exit', () => {
+  // exit event is synchronous-only, so saveDbSync is safe here
+  if (db) {
+    try { saveDbSync(); } catch (e) { /* ignore errors on exit */ }
+  }
+});
+
+function getDb() {
+  return db;
+}
+
+// Helper: run query and return array of row objects
+function all(sql, params = []) {
+  const stmt = db.prepare(sql);
+  if (params.length) stmt.bind(params);
+  const results = [];
+  while (stmt.step()) {
+    results.push(stmt.getAsObject());
+  }
+  stmt.free();
+  return results;
+}
+
+// Helper: run query and return first row object or null
+function get(sql, params = []) {
+  const rows = all(sql, params);
+  return rows.length > 0 ? rows[0] : null;
+}
+
+// Helper: run INSERT/UPDATE/DELETE, return { changes, lastInsertRowid }
+function run(sql, params = []) {
+  db.run(sql, params);
+  const changes = db.getRowsModified();
+  const lastRow = get('SELECT last_insert_rowid() as id');
+  const info = {
+    changes,
+    lastInsertRowid: lastRow ? lastRow.id : 0
+  };
+  saveDb();
+  return info;
+}
+
+// Phase 6.3: Transaction helper
+function transaction(fn) {
+  db.run('BEGIN TRANSACTION');
+  try {
+    const result = fn();
+    db.run('COMMIT');
+    saveDb();
+    return result;
+  } catch (e) {
+    db.run('ROLLBACK');
+    throw e;
+  }
+}
+
+module.exports = { initDb, getDb, saveDb, saveDbSync, flushDb, all, get, run, transaction };

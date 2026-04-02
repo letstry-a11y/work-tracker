@@ -1,0 +1,11 @@
+# Dependencies
+server/node_modules/
+
+# Database
+server/*.db
+
+# Uploads
+server/uploads/
+
+# OS files
+.DS_Store
