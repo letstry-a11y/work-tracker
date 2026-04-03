@@ -63,7 +63,7 @@ export async function showGridDetail(empId, empName, date) {
   } else {
     content.innerHTML = logs.map(l => `<div class="detail-log-item">
       <div class="detail-log-header">
-        <strong>${esc(l.task_title || '无关联任务')}</strong>
+        <strong>${esc(l.task_title || '无关联KR')}</strong>
         <span style="margin-left:auto;font-weight:700;color:var(--primary-light)">${l.hours}h</span>
       </div>
       ${l.work_content ? `<div class="detail-log-body">${esc(l.work_content)}</div>` : ''}

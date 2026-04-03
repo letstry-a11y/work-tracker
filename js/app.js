@@ -5,7 +5,7 @@ import { api, setShowLoginPage } from './api.js';
 import { esc, closeModal, getMonday, todayStr } from './utils.js';
 import { showLoginPage, showAppPage, showRegister, showLogin, doLogin, doRegister, doLogout, showPwdModal, doChangePwd } from './auth.js';
 import { loadDashboard, loadEmpDashboard } from './dashboard.js';
-import { loadObjectives, showObjModal, editObj, saveObj, deleteObj, addKR, editKR, saveKR, deleteKR } from './objectives.js';
+import { loadObjectives, switchObjTab, showObjModal, showGlobalObjModal, editObj, saveObj, deleteObj, addKR, editKR, saveKR, deleteKR, claimKR, approveObj, rejectObj } from './objectives.js';
 import { loadTasks, showTaskModal, editTask, saveTask, deleteTask, applyTaskComplete } from './tasks.js';
 import { loadDailyLogs, showLogModal, editLog, saveLog, deleteLog, copyPreviousDay } from './dailyLogs.js';
 import { loadDeliverables, showDeliverableUploadModal, saveDeliverable, deleteDeliverable, applyDelivConfirm } from './deliverables.js';
@@ -84,10 +84,15 @@ document.body.addEventListener('click', (e) => {
     case 'saveDeptMembers': saveDeptMembers(); break;
 
     // Objectives
+    case 'objSubTab': switchObjTab(btn.dataset.objTab); break;
     case 'showObjModal': showObjModal(); break;
+    case 'showGlobalObjModal': showGlobalObjModal(); break;
     case 'saveObj': saveObj(); break;
     case 'editObj': editObj(id); break;
     case 'deleteObj': deleteObj(id); break;
+    case 'approveObj': approveObj(id); break;
+    case 'rejectObj': rejectObj(id); break;
+    case 'claimKR': claimKR(id); break;
     case 'addKR': addKR(id); break;
     case 'editKR': editKR(id); break;
     case 'saveKR': saveKR(); break;
@@ -298,30 +303,45 @@ async function initApp() {
   const objData = await api('/api/objectives');
   if (objData) state.objectivesCache = objData;
 
+  // Populate parent objective dropdown (approved global objectives)
+  const objParentSelect = document.getElementById('objParentObjective');
+  if (objParentSelect) {
+    objParentSelect.innerHTML = '<option value="">无（独立个人OKR）</option>'
+      + (state.objectivesCache || [])
+        .filter(o => o.scope === 'global' && o.approval_status === 'approved')
+        .map(o => `<option value="${o.id}">${esc(o.title)}</option>`).join('');
+  }
+
   const objFilterEl = document.getElementById('taskFilterObjective');
   if (objFilterEl) {
-    objFilterEl.innerHTML = '<option value="">全部</option><option value="none">无目标</option>'
-      + (state.objectivesCache || []).map(o =>
-        `<option value="${o.id}">${esc(o.title)}</option>`
-      ).join('');
+    objFilterEl.innerHTML = '<option value="">全部</option><option value="none">无OKR</option>'
+      + (state.objectivesCache || []).map(o => {
+        const prefix = o.scope === 'global' ? '[整体] ' : '';
+        return `<option value="${o.id}">${prefix}${esc(o.title)}</option>`;
+      }).join('');
   }
 
   const taskObjSelect = document.getElementById('taskObjective');
   if (taskObjSelect) {
-    taskObjSelect.innerHTML = '<option value="">无 (独立任务)</option>'
-      + (state.objectivesCache || []).map(o =>
-        `<option value="${o.id}">${esc(o.title)} (${esc(o.employee_name || '')})</option>`
-      ).join('');
+    taskObjSelect.innerHTML = '<option value="">无 (独立KR)</option>'
+      + (state.objectivesCache || []).filter(o => o.approval_status === 'approved').map(o => {
+        const prefix = o.scope === 'global' ? '[整体] ' : '';
+        const suffix = o.scope !== 'global' && o.employee_name ? ` (${esc(o.employee_name)})` : '';
+        return `<option value="${o.id}">${prefix}${esc(o.title)}${suffix}</option>`;
+      }).join('');
   }
 
-  // Assignee change -> filter objectives in task modal
+  // Assignee change -> filter objectives in task modal (global always shown)
   document.getElementById('taskAssignee').addEventListener('change', function() {
     const sel = this.value;
     const tObjSel = document.getElementById('taskObjective');
     if (tObjSel) {
-      tObjSel.innerHTML = '<option value="">无 (独立任务)</option>'
-        + (state.objectivesCache || []).filter(o => !sel || String(o.employee_id) === sel)
-          .map(o => `<option value="${o.id}">${esc(o.title)}</option>`).join('');
+      tObjSel.innerHTML = '<option value="">无 (独立KR)</option>'
+        + (state.objectivesCache || []).filter(o => o.approval_status === 'approved' && (o.scope === 'global' || !sel || String(o.employee_id) === sel))
+          .map(o => {
+            const prefix = o.scope === 'global' ? '[整体] ' : '';
+            return `<option value="${o.id}">${prefix}${esc(o.title)}</option>`;
+          }).join('');
     }
   });
 
@@ -337,8 +357,15 @@ async function initApp() {
   document.getElementById('reviewEmpFilterGroup').style.display = isLeaderOrAdmin ? '' : 'none';
   document.getElementById('adminTaskFilters').style.display = isLeaderOrAdmin ? '' : 'none';
   document.getElementById('btnCreateTask').style.display = isLeaderOrAdmin ? '' : 'none';
-  document.getElementById('objFilterBar').style.display = isLeaderOrAdmin ? '' : 'none';
-  document.getElementById('btnCreateObj').style.display = isLeaderOrAdmin ? '' : 'none';
+  // Objective filter bar: always visible (employees need scope filter)
+  document.getElementById('objFilterBar').style.display = '';
+  // Global obj button: admin only
+  document.getElementById('btnCreateGlobalObj').style.display = isAdmin ? '' : 'none';
+  // Personal obj button: always visible (employees can submit for approval)
+  document.getElementById('btnCreateObj').style.display = '';
+  // Approval filter: admin/leader only
+  const objApprovalGroup = document.getElementById('objFilterApprovalGroup');
+  if (objApprovalGroup) objApprovalGroup.style.display = isLeaderOrAdmin ? '' : 'none';
   document.getElementById('adminDashboard').style.display = isLeaderOrAdmin ? '' : 'none';
   document.getElementById('empDashboard').style.display = isLeaderOrAdmin ? 'none' : '';
 
@@ -365,23 +392,30 @@ async function initApp() {
     if (el) el.addEventListener('change', loadTasks);
   });
 
-  // Assignee filter change -> update objective filter options
+  // Assignee filter change -> update objective filter options (global always shown)
   document.getElementById('taskFilterAssignee').addEventListener('change', function() {
     const sel = this.value;
     const ofEl = document.getElementById('taskFilterObjective');
     if (ofEl) {
       const prev = ofEl.value;
-      ofEl.innerHTML = '<option value="">全部</option><option value="none">无目标</option>'
-        + (state.objectivesCache || []).filter(o => !sel || String(o.employee_id) === sel)
-          .map(o => `<option value="${o.id}">${esc(o.title)}</option>`).join('');
+      ofEl.innerHTML = '<option value="">全部</option><option value="none">无OKR</option>'
+        + (state.objectivesCache || []).filter(o => o.scope === 'global' || !sel || String(o.employee_id) === sel)
+          .map(o => {
+            const prefix = o.scope === 'global' ? '[整体] ' : '';
+            return `<option value="${o.id}">${prefix}${esc(o.title)}</option>`;
+          }).join('');
       ofEl.value = prev;
       if (ofEl.value !== prev) ofEl.value = '';
     }
   });
 
-  // Objective filter listener
+  // Objective filter listeners
   const objFilter = document.getElementById('objFilterEmployee');
   if (objFilter) objFilter.addEventListener('change', loadObjectives);
+  const objScopeFilter = document.getElementById('objFilterScope');
+  if (objScopeFilter) objScopeFilter.addEventListener('change', loadObjectives);
+  const objApprovalFilter = document.getElementById('objFilterApproval');
+  if (objApprovalFilter) objApprovalFilter.addEventListener('change', loadObjectives);
 
   // Deliverable filter listener
   const delivFilter = document.getElementById('delivEmpFilter');

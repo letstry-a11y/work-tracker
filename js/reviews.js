@@ -24,8 +24,8 @@ export async function loadReviews() {
   document.getElementById('reviewCount').textContent = `（共 ${items.length} 条）`;
 
   document.getElementById('reviewsList').innerHTML = items.map(item => {
-    const typeLabel = item.item_type === 'task' ? '任务' : '交付物';
-    const typeColor = item.item_type === 'task' ? 'var(--primary-light)' : 'var(--success)';
+    const typeLabel = item.item_type === 'task' ? 'KR' : (item.item_type === 'objective' ? 'OKR' : '交付物');
+    const typeColor = item.item_type === 'task' ? 'var(--primary-light)' : (item.item_type === 'objective' ? '#ffc107' : 'var(--success)');
     const statusBadge = `<span class="badge badge-${item.confirm_status === 'pending' ? 'P1' : item.confirm_status === 'confirmed' ? 'completed' : 'overdue'}">${confirmStatusText(item.confirm_status)}</span>`;
     const fileLink = item.file_name ? `<a href="/uploads/${esc(item.file_name)}" target="_blank" style="color:var(--primary-light);font-size:12px;margin-left:6px">${esc(item.file_name)}</a>` : '';
     const timeStr = item.confirmed_at ? item.confirmed_at.slice(0, 16).replace('T', ' ') : (item.created_at ? item.created_at.slice(0, 10) : '-');

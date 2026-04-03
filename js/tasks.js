@@ -54,12 +54,12 @@ export async function loadTasks() {
       <td>${t.deadline || '-'}</td>
       <td>${actions}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="10" class="empty-table-cell">暂无任务</td></tr>';
+  }).join('') || '<tr><td colspan="10" class="empty-table-cell">暂无KR</td></tr>';
 }
 
 export function showTaskModal(editId) {
   document.getElementById('taskEditId').value = '';
-  document.getElementById('taskModalTitle').textContent = '创建任务';
+  document.getElementById('taskModalTitle').textContent = '创建KR';
   document.getElementById('taskTitle').value = '';
   document.getElementById('taskDesc').value = '';
   document.getElementById('taskAssignee').value = '';
@@ -80,7 +80,7 @@ export function editTask(id) {
   const t = state.tasksCache.find(x => x.id === id);
   if (!t) return;
   document.getElementById('taskEditId').value = id;
-  document.getElementById('taskModalTitle').textContent = '编辑任务';
+  document.getElementById('taskModalTitle').textContent = '编辑KR';
   document.getElementById('taskTitle').value = t.title;
   document.getElementById('taskDesc').value = t.description;
   document.getElementById('taskAssignee').value = t.assignee_id || '';
@@ -122,12 +122,12 @@ export async function saveTask() {
     if (!res) return;
   }
   closeModal('taskModal');
-  toast('任务已保存');
+  toast('KR已保存');
   loadTasks();
 }
 
 export async function deleteTask(id) {
-  const ok = await confirmDialog({ title: '删除任务', message: '确认删除该任务？此操作不可撤销。' });
+  const ok = await confirmDialog({ title: '删除KR', message: '确认删除该KR？此操作不可撤销。' });
   if (!ok) return;
   const res = await api('/api/tasks/' + id, { method: 'DELETE' });
   if (!res) return;
