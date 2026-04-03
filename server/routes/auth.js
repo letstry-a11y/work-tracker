@@ -90,6 +90,14 @@ router.post('/register', (req, res) => {
     [username.trim(), password_hash, finalRole, empId]
   );
 
+  // 注册为 dept_leader → 同步部门负责人
+  if (finalRole === 'dept_leader' && empId) {
+    const emp = get('SELECT department_id FROM employees WHERE id = ?', [empId]);
+    if (emp && emp.department_id) {
+      run('UPDATE departments SET leader_employee_id = ? WHERE id = ?', [empId, emp.department_id]);
+    }
+  }
+
   // 生成 session（注册成功后直接登录）
   const token = generateToken();
   const expires_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -197,7 +205,26 @@ router.put('/users/:id/role', auth, (req, res) => {
     return res.status(400).json({ error: '无效的角色' });
   }
   const { id } = req.params;
+
+  // 角色从 dept_leader 改为其他 → 清除部门负责人
+  const oldUser = get('SELECT role, employee_id FROM users WHERE id = ?', [id]);
+  if (oldUser && oldUser.role === 'dept_leader' && role !== 'dept_leader' && oldUser.employee_id) {
+    run('UPDATE departments SET leader_employee_id = NULL WHERE leader_employee_id = ?', [oldUser.employee_id]);
+  }
+
   run('UPDATE users SET role = ? WHERE id = ?', [role, id]);
+
+  // 角色改为 dept_leader → 同步部门负责人
+  if (role === 'dept_leader') {
+    const user = get('SELECT employee_id FROM users WHERE id = ?', [id]);
+    if (user && user.employee_id) {
+      const emp = get('SELECT department_id FROM employees WHERE id = ?', [user.employee_id]);
+      if (emp && emp.department_id) {
+        run('UPDATE departments SET leader_employee_id = ? WHERE id = ?', [user.employee_id, emp.department_id]);
+      }
+    }
+  }
+
   res.json({ ok: true });
 });
 
@@ -299,11 +326,26 @@ router.get('/me/stats', auth, (req, res) => {
 
   const myTasks = all(`SELECT t.id, t.objective_id, t.title, t.status, t.priority, t.deadline, t.completed_at, t.confirm_status, t.confirm_note FROM tasks t WHERE t.assignee_id = ? ORDER BY t.objective_id, t.id DESC`, [empId]);
 
-  // 获取员工的目标（带KR树）
+  // 获取员工的个人目标（带KR树）
   const myObjectives = all('SELECT * FROM objectives WHERE employee_id = ? ORDER BY id', [empId]);
   for (const obj of myObjectives) {
     obj.key_results = myTasks.filter(t => t.objective_id === obj.id);
+    if (obj.parent_objective_id) {
+      const parent = get('SELECT title FROM objectives WHERE id = ?', [obj.parent_objective_id]);
+      if (parent) obj.parent_title = parent.title;
+    }
   }
+
+  // 加载该员工参与的整体目标（有KR分配给自己的）
+  const globalObjs = all(`
+    SELECT DISTINCT o.* FROM objectives o
+    INNER JOIN tasks t ON t.objective_id = o.id AND t.assignee_id = ?
+    WHERE o.scope = 'global' AND o.approval_status = 'approved'
+  `, [empId]);
+  for (const obj of globalObjs) {
+    obj.key_results = myTasks.filter(t => t.objective_id === obj.id);
+  }
+  const allMyObjectives = [...globalObjs, ...myObjectives];
   const completedTasks = myTasks.filter(t => t.status === 'completed').length;
   const inProgressTasks = myTasks.filter(t => t.status === 'in_progress').length;
   const pendingTasks = myTasks.filter(t => t.status === 'pending').length;
@@ -328,7 +370,7 @@ router.get('/me/stats', auth, (req, res) => {
     t.status === 'overdue' || (t.status !== 'completed' && t.deadline && t.deadline < new Date().toISOString().slice(0, 10))
   ).slice(0, 10);
 
-  const result = { weeklyHours, totalTasks: myTasks.length, inProgressTasks, completedTasks, overdueTasks, pendingTasks, myTasks, myObjectives, overdueList, weekStart };
+  const result = { weeklyHours, totalTasks: myTasks.length, inProgressTasks, completedTasks, overdueTasks, pendingTasks, myTasks, myObjectives: allMyObjectives, overdueList, weekStart };
 
   // dept_leader: add department stats
   if (req.user.role === 'dept_leader') {

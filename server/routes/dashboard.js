@@ -48,22 +48,59 @@ router.get('/', deptLeaderOrAdmin, (req, res) => {
     FROM objectives o
     LEFT JOIN employees e ON o.employee_id = e.id
     LEFT JOIN tasks t ON t.objective_id = o.id
+    WHERE o.approval_status = 'approved'
   `;
   const objParams = [];
   if (filterDeptId) {
     const deptEmpIds = getDeptEmployeeIds(filterDeptId);
     if (deptEmpIds.length > 0) {
-      objSql += ` WHERE o.employee_id IN (${deptEmpIds.map(() => '?').join(',')})`;
+      const ph = deptEmpIds.map(() => '?').join(',');
+      objSql += ` AND (o.employee_id IN (${ph}) OR o.scope = 'global')`;
       objParams.push(...deptEmpIds);
     } else {
-      objSql += ' WHERE 1=0';
+      objSql += ` AND o.scope = 'global'`;
     }
   }
-  objSql += ' GROUP BY o.id ORDER BY o.id';
+  objSql += ' GROUP BY o.id ORDER BY o.scope ASC, o.id';
   const objectivesWithProgress = all(objSql, objParams);
 
+  // Compute progress including child objectives for global objectives
+  const globalObjIds = objectivesWithProgress.filter(o => o.scope === 'global').map(o => o.id);
+  let childStatsMap = {};
+  if (globalObjIds.length > 0) {
+    const gph = globalObjIds.map(() => '?').join(',');
+    // For each child objective, check if all its KRs are completed
+    const childObjs = all(`SELECT o.id, o.parent_objective_id FROM objectives o WHERE o.parent_objective_id IN (${gph})`, globalObjIds);
+    const childIds = childObjs.map(c => c.id);
+    let childKrStats = {};
+    if (childIds.length > 0) {
+      const cph = childIds.map(() => '?').join(',');
+      const childKrRows = all(`SELECT objective_id, COUNT(*) as total, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as completed FROM tasks WHERE objective_id IN (${cph}) GROUP BY objective_id`, childIds);
+      for (const r of childKrRows) {
+        childKrStats[r.objective_id] = r;
+      }
+    }
+    // Aggregate per parent
+    for (const child of childObjs) {
+      const pid = child.parent_objective_id;
+      if (!childStatsMap[pid]) childStatsMap[pid] = { childCount: 0, childCompleted: 0 };
+      const krStat = childKrStats[child.id];
+      if (krStat && krStat.total > 0) {
+        childStatsMap[pid].childCount++;
+        if (krStat.completed === krStat.total) childStatsMap[pid].childCompleted++;
+      }
+    }
+  }
+
   for (const obj of objectivesWithProgress) {
-    obj.progress = obj.kr_count > 0 ? Math.round((obj.kr_completed / obj.kr_count) * 100) : 0;
+    if (obj.scope === 'global' && childStatsMap[obj.id]) {
+      const cs = childStatsMap[obj.id];
+      const totalItems = obj.kr_count + cs.childCount;
+      const completedItems = obj.kr_completed + cs.childCompleted;
+      obj.progress = totalItems > 0 ? Math.round(completedItems / totalItems * 100) : 0;
+    } else {
+      obj.progress = obj.kr_count > 0 ? Math.round((obj.kr_completed / obj.kr_count) * 100) : 0;
+    }
   }
 
   // 交付物统计

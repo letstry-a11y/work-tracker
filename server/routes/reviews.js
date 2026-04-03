@@ -100,6 +100,50 @@ router.get('/', (req, res) => {
     results.push(...dels.map(d => ({ ...d, item_type: 'deliverable' })));
   }
 
+  // 目标审批
+  if (!type || type === 'objective') {
+    let objSql = `
+      SELECT o.id, o.title, o.approval_status as confirm_status, o.approved_at as confirmed_at,
+             o.employee_id, e.name as submitter_name, o.created_at,
+             o.approved_by as confirmed_by, u.username as reviewer_name,
+             'objective' as item_type
+      FROM objectives o
+      LEFT JOIN employees e ON o.employee_id = e.id
+      LEFT JOIN users u ON o.approved_by = u.id
+      WHERE (o.approval_status != 'approved' OR o.approved_by IS NOT NULL)
+    `;
+    const objParams = [];
+
+    if (isDeptLeader) {
+      if (deptEmpIds.length > 0) {
+        objSql += ` AND o.employee_id IN (${deptEmpIds.map(() => '?').join(',')})`;
+        objParams.push(...deptEmpIds);
+      } else {
+        objSql += ' AND 1=0';
+      }
+    } else if (!isAdmin) {
+      objSql += ' AND o.employee_id = ?';
+      objParams.push(req.user.employee_id);
+    }
+
+    if (isAdmin && employee_id) {
+      objSql += ' AND o.employee_id = ?';
+      objParams.push(Number(employee_id));
+    } else if (isDeptLeader && employee_id) {
+      objSql += ' AND o.employee_id = ?';
+      objParams.push(Number(employee_id));
+    }
+
+    if (status) {
+      objSql += ' AND o.approval_status = ?';
+      objParams.push(status);
+    }
+
+    objSql += " ORDER BY o.approval_status = 'pending' DESC, o.approved_at DESC";
+    const objs = all(objSql, objParams);
+    results.push(...objs.map(o => ({ ...o, item_type: 'objective' })));
+  }
+
   // 按时间排序
   results.sort((a, b) => {
     const aTime = a.confirmed_at || a.created_at || '';
@@ -185,6 +229,40 @@ router.put('/deliverables/:id/reject', (req, res) => {
   run(
     "UPDATE deliverables SET confirm_status='rejected', confirm_note=?, confirmed_by=?, confirmed_at=? WHERE id=?",
     [reason || '不合格，请重新处理', req.user.id, now, Number(req.params.id)]
+  );
+  res.json({ success: true });
+});
+
+// PUT /api/reviews/objectives/:id/confirm
+router.put('/objectives/:id/confirm', (req, res) => {
+  const obj = get('SELECT o.*, e.department_id FROM objectives o LEFT JOIN employees e ON o.employee_id = e.id WHERE o.id = ?', [Number(req.params.id)]);
+  if (!obj) return res.status(404).json({ error: '目标不存在' });
+
+  if (!canReview(req, obj.employee_id)) {
+    return res.status(403).json({ error: '只有管理员或部门负责人可以审核' });
+  }
+
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  run(
+    "UPDATE objectives SET approval_status='approved', approved_by=?, approved_at=? WHERE id=?",
+    [req.user.id, now, Number(req.params.id)]
+  );
+  res.json({ success: true });
+});
+
+// PUT /api/reviews/objectives/:id/reject
+router.put('/objectives/:id/reject', (req, res) => {
+  const { reason } = req.body;
+  const obj = get('SELECT o.*, e.department_id FROM objectives o LEFT JOIN employees e ON o.employee_id = e.id WHERE o.id = ?', [Number(req.params.id)]);
+  if (!obj) return res.status(404).json({ error: '目标不存在' });
+
+  if (!canReview(req, obj.employee_id)) {
+    return res.status(403).json({ error: '只有管理员或部门负责人可以审核' });
+  }
+
+  run(
+    "UPDATE objectives SET approval_status='rejected' WHERE id=?",
+    [Number(req.params.id)]
   );
   res.json({ success: true });
 });

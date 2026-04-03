@@ -111,10 +111,15 @@ router.post('/', (req, res) => {
     finalAssignee = req.user.employee_id;
   }
 
-  // Fix 2.7: Validate objective ownership - objective.employee_id must match assignee
+  // Validate objective: must exist, must be approved, personal objectives must match assignee
   if (objective_id) {
     const obj = get('SELECT * FROM objectives WHERE id = ?', [Number(objective_id)]);
-    if (obj && finalAssignee && obj.employee_id !== finalAssignee) {
+    if (!obj) return res.status(400).json({ error: '关联目标不存在' });
+    if (obj.approval_status !== 'approved') {
+      return res.status(400).json({ error: '目标尚未审批通过，无法添加关键结果' });
+    }
+    // Personal objective: assignee must match owner; Global objective: any assignee
+    if (obj.scope === 'personal' && obj.employee_id && finalAssignee && obj.employee_id !== finalAssignee) {
       return res.status(400).json({ error: '目标归属与任务负责人不一致' });
     }
   }

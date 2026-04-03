@@ -171,6 +171,8 @@ function renderObjective(obj, canManage, isAdmin, isDeptLeader) {
                   kr.confirm_status === 'confirmed' ? '<span class="badge badge-completed" style="font-size:10px;margin-left:4px">已通过</span>' :
                   kr.confirm_status === 'rejected' ? '<span class="badge badge-overdue" style="font-size:10px;margin-left:4px">已打回</span>' : '';
     const assigneeLabel = isGlobal && kr.assignee_name ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px">&#128100; ${esc(kr.assignee_name)}</span>` : '';
+    const deadlineExpired = kr.deadline && kr.status !== 'completed' && new Date(kr.deadline) < new Date(new Date().toDateString());
+    const deadlineLabel = kr.deadline ? `<span style="font-size:11px;color:${deadlineExpired ? 'var(--danger, #e53935)' : 'var(--text-muted)'};margin-left:6px">${deadlineExpired ? '⚠️' : '📅'} ${kr.deadline}</span>` : '';
     const krActions = canManage ? `<button class="btn btn-secondary btn-sm" data-action="editKR" data-id="${kr.id}">编辑</button>
             <button class="btn btn-danger btn-sm" data-action="deleteKR" data-id="${kr.id}">删除</button>` : '';
     return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
@@ -180,7 +182,7 @@ function renderObjective(obj, canManage, isAdmin, isDeptLeader) {
            style="color:var(--text);text-decoration:none;border-bottom:1px dashed var(--text-muted)">
           ${esc(kr.title)}
         </a>
-        ${assigneeLabel}
+        ${assigneeLabel}${deadlineLabel}
       </span>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         <span class="badge badge-${kr.status}">${statusText(kr.status)}</span>${badge}
@@ -232,10 +234,12 @@ function renderChildObjective(obj, canManage, isAdmin, isDeptLeader) {
     const badge = kr.status === 'completed' ? '<span class="badge badge-completed" style="font-size:9px">&#10004;</span>' :
                   `<span class="badge badge-${kr.status}" style="font-size:9px">${statusText(kr.status)}</span>`;
     const assigneeLabel = kr.assignee_name ? `<span style="font-size:10px;color:var(--text-muted)">&#128100; ${esc(kr.assignee_name)}</span>` : '';
+    const deadlineExpired = kr.deadline && kr.status !== 'completed' && new Date(kr.deadline) < new Date(new Date().toDateString());
+    const deadlineLabel = kr.deadline ? `<span style="font-size:10px;color:${deadlineExpired ? 'var(--danger, #e53935)' : 'var(--text-muted)'};margin-left:4px">${deadlineExpired ? '⚠️' : '📅'} ${kr.deadline}</span>` : '';
     return `<div style="padding:4px 0;display:flex;align-items:center;gap:6px;font-size:13px">
       <span class="badge badge-okr" style="font-size:8px">KR</span>
       <span style="flex:1">${esc(kr.title)}</span>
-      ${assigneeLabel}
+      ${assigneeLabel}${deadlineLabel}
       ${badge}
     </div>`;
   }).join('');

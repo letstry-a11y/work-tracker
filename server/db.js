@@ -31,13 +31,61 @@ async function initDb() {
   db.run(`
     CREATE TABLE IF NOT EXISTS objectives (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      employee_id INTEGER NOT NULL,
+      employee_id INTEGER,
       title TEXT NOT NULL,
       weight REAL DEFAULT 0,
+      scope TEXT DEFAULT 'personal',
+      approval_status TEXT DEFAULT 'approved',
+      approved_by INTEGER,
+      approved_at TEXT DEFAULT '',
+      created_by INTEGER,
       created_at TEXT DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
     )
   `);
+
+  // Migration: rebuild objectives table if employee_id is NOT NULL (old schema)
+  try {
+    const objSql = get("SELECT sql FROM sqlite_master WHERE type='table' AND name='objectives'");
+    if (objSql && objSql.sql && objSql.sql.includes('employee_id INTEGER NOT NULL')) {
+      db.run(`CREATE TABLE objectives_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_id INTEGER,
+        title TEXT NOT NULL,
+        weight REAL DEFAULT 0,
+        scope TEXT DEFAULT 'personal',
+        approval_status TEXT DEFAULT 'approved',
+        approved_by INTEGER,
+        approved_at TEXT DEFAULT '',
+        created_by INTEGER,
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+      )`);
+      db.run("INSERT INTO objectives_new (id, employee_id, title, weight, created_at) SELECT id, employee_id, title, weight, created_at FROM objectives");
+      db.run("DROP TABLE objectives");
+      db.run("ALTER TABLE objectives_new RENAME TO objectives");
+      saveDbSync();
+    } else if (objSql && objSql.sql && !objSql.sql.includes('scope')) {
+      // Table exists with nullable employee_id but missing new columns
+      const objCols = all("PRAGMA table_info(objectives)");
+      const colNames = objCols.map(c => c.name);
+      if (!colNames.includes('scope')) db.run("ALTER TABLE objectives ADD COLUMN scope TEXT DEFAULT 'personal'");
+      if (!colNames.includes('approval_status')) db.run("ALTER TABLE objectives ADD COLUMN approval_status TEXT DEFAULT 'approved'");
+      if (!colNames.includes('approved_by')) db.run("ALTER TABLE objectives ADD COLUMN approved_by INTEGER DEFAULT NULL");
+      if (!colNames.includes('approved_at')) db.run("ALTER TABLE objectives ADD COLUMN approved_at TEXT DEFAULT ''");
+      if (!colNames.includes('created_by')) db.run("ALTER TABLE objectives ADD COLUMN created_by INTEGER DEFAULT NULL");
+      saveDbSync();
+    }
+  } catch (e) { /* migration already done */ }
+
+  // Migration: add parent_objective_id column
+  try {
+    const objCols2 = all("PRAGMA table_info(objectives)");
+    if (!objCols2.some(c => c.name === 'parent_objective_id')) {
+      db.run("ALTER TABLE objectives ADD COLUMN parent_objective_id INTEGER DEFAULT NULL");
+      saveDbSync();
+    }
+  } catch (e) { /* migration already done */ }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS tasks (
@@ -292,6 +340,17 @@ async function initDb() {
     saveDbSync();
   } catch (e) { /* migration already done */ }
 
+  // One-time fix: backfill leader_employee_id from existing dept_leader users
+  try {
+    db.run(`UPDATE departments SET leader_employee_id = (
+      SELECT u.employee_id FROM users u
+      JOIN employees e ON u.employee_id = e.id
+      WHERE e.department_id = departments.id AND u.role = 'dept_leader'
+      LIMIT 1
+    ) WHERE leader_employee_id IS NULL`);
+    saveDbSync();
+  } catch (e) { /* backfill already done or no data */ }
+
   // Phase 3.1: Add database indexes for performance
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id)',
@@ -306,6 +365,9 @@ async function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)',
     'CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)',
     'CREATE INDEX IF NOT EXISTS idx_objectives_employee ON objectives(employee_id)',
+    'CREATE INDEX IF NOT EXISTS idx_objectives_scope ON objectives(scope)',
+    'CREATE INDEX IF NOT EXISTS idx_objectives_approval ON objectives(approval_status)',
+    'CREATE INDEX IF NOT EXISTS idx_objectives_parent ON objectives(parent_objective_id)',
     'CREATE INDEX IF NOT EXISTS idx_weekly_scores_employee_week ON weekly_scores(employee_id, week_start)',
     'CREATE INDEX IF NOT EXISTS idx_users_employee ON users(employee_id)',
     'CREATE INDEX IF NOT EXISTS idx_employees_department ON employees(department_id)',

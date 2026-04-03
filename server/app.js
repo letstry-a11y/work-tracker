@@ -96,7 +96,7 @@ async function start() {
 
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log(`工作追踪系统已启动: http://localhost:${PORT}`);
+    console.log(`畅视OKR管理系统已启动: http://localhost:${PORT}`);
   });
 }
 
