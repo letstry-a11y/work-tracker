@@ -7,9 +7,10 @@ import { toast, closeModal, esc, statusText, confirmDialog } from './utils.js';
 export async function loadObjectives() {
   const empId = document.getElementById('objFilterEmployee') && document.getElementById('objFilterEmployee').value;
   const isAdmin = state.currentUser.role === 'admin';
+  const canManage = isAdmin || state.currentUser.role === 'dept_leader';
   let url = '/api/objectives';
   if (empId) url += '?employee_id=' + empId;
-  if (!isAdmin && state.currentUser.employee_id) url = '/api/objectives?employee_id=' + state.currentUser.employee_id;
+  if (!canManage && state.currentUser.employee_id) url = '/api/objectives?employee_id=' + state.currentUser.employee_id;
 
   const data = await api(url);
   if (!data) return;
@@ -20,7 +21,7 @@ export async function loadObjectives() {
     container.innerHTML = `<div class="empty-state">
       <div class="empty-state-icon">&#128203;</div>
       <div class="empty-state-text">暂无目标</div>
-      ${isAdmin ? '<div class="empty-state-hint">点击"添加目标"创建第一个 OKR</div>' : '<div class="empty-state-hint">管理员尚未为您设置目标</div>'}
+      ${canManage ? '<div class="empty-state-hint">点击"添加目标"创建第一个 OKR</div>' : '<div class="empty-state-hint">管理员尚未为您设置目标</div>'}
     </div>`;
     return;
   }
@@ -52,7 +53,7 @@ export async function loadObjectives() {
           </span>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
             <span class="badge badge-${kr.status}">${statusText(kr.status)}</span>${badge}
-            ${isAdmin ? `<button class="btn btn-secondary btn-sm" data-action="editKR" data-id="${kr.id}">编辑</button>
+            ${canManage ? `<button class="btn btn-secondary btn-sm" data-action="editKR" data-id="${kr.id}">编辑</button>
             <button class="btn btn-danger btn-sm" data-action="deleteKR" data-id="${kr.id}">删除</button>` : ''}
           </div>
         </div>`;
@@ -62,7 +63,7 @@ export async function loadObjectives() {
           <span style="font-size:18px">&#127919;</span>
           <span style="flex:1;font-weight:700;font-size:15px;min-width:120px">${esc(obj.title)}</span>
           <span class="badge badge-in_progress">权重 ${Math.round((obj.weight || 0) * 100)}%</span>
-          ${isAdmin ? `<button class="btn btn-primary btn-sm" data-action="addKR" data-id="${obj.id}">&#10010; KR</button>
+          ${canManage ? `<button class="btn btn-primary btn-sm" data-action="addKR" data-id="${obj.id}">&#10010; KR</button>
           <button class="btn btn-secondary btn-sm" data-action="editObj" data-id="${obj.id}">&#9998; 编辑</button>
           <button class="btn btn-danger btn-sm" data-action="deleteObj" data-id="${obj.id}">&#10006; 删除</button>` : ''}
         </div>

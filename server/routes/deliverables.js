@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const { all, get, run } = require('../db');
-const { adminOnly } = require('../auth/middleware');
+const { adminOnly, getDeptEmployeeIds } = require('../auth/middleware');
 
 const router = express.Router();
 
@@ -53,8 +53,17 @@ router.get('/', (req, res) => {
   `;
   const params = [];
 
-  // 员工只能看自己关联的任务交付物
-  if (req.user.role !== 'admin') {
+  if (req.user.role === 'dept_leader' && req.user.department_id) {
+    const deptEmpIds = getDeptEmployeeIds(req.user.department_id);
+    if (deptEmpIds.length > 0) {
+      sql += ` AND (d.employee_id IN (${deptEmpIds.map(() => '?').join(',')}) OR t.assignee_id IN (${deptEmpIds.map(() => '?').join(',')}))`;
+      params.push(...deptEmpIds, ...deptEmpIds);
+    } else {
+      sql += ' AND 1=0';
+    }
+    if (task_id) { sql += ' AND d.task_id = ?'; params.push(Number(task_id)); }
+    if (employee_id) { sql += ' AND d.employee_id = ?'; params.push(Number(employee_id)); }
+  } else if (req.user.role !== 'admin') {
     if (req.user.employee_id) {
       sql += ' AND (d.employee_id = ? OR t.assignee_id = ?)';
       params.push(req.user.employee_id, req.user.employee_id);

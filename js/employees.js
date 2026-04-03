@@ -4,6 +4,9 @@ import { state } from './state.js';
 import { api } from './api.js';
 import { toast, closeModal, esc, confirmDialog } from './utils.js';
 
+const roleLabels = { admin: '管理员', dept_leader: '部门负责人', employee: '员工' };
+const roleBadge = { admin: 'P0', dept_leader: 'P1', employee: 'P2' };
+
 export async function loadEmployees() {
   const data = await api('/api/employees');
   if (!data) return;
@@ -13,7 +16,7 @@ export async function loadEmployees() {
     <tr>
       <td>${e.id}</td>
       <td>${esc(e.name)}</td>
-      <td>${esc(e.group_name) || '-'}</td>
+      <td>${esc(e.department_name) || esc(e.group_name) || '-'}</td>
       <td>${e.created_at ? e.created_at.slice(0, 10) : '-'}</td>
       <td><button class="btn btn-danger btn-sm" data-action="deleteEmployee" data-id="${e.id}">删除</button></td>
     </tr>
@@ -34,15 +37,30 @@ export function showEmployeeModal() {
   document.getElementById('empName').value = '';
   document.getElementById('empRole').value = '';
   document.getElementById('empGroup').value = '';
+  // Populate department dropdown
+  const deptSel = document.getElementById('empDepartment');
+  if (deptSel) {
+    deptSel.innerHTML = '<option value="">无</option>' + (state.departmentsCache || []).map(d =>
+      `<option value="${d.id}">${esc(d.name)}</option>`
+    ).join('');
+    deptSel.value = '';
+  }
   document.getElementById('empModal').classList.add('show');
 }
 
 export async function saveEmployee() {
   const name = document.getElementById('empName').value.trim();
   if (!name) return toast('姓名不能为空', 'error');
+  const deptSel = document.getElementById('empDepartment');
+  const department_id = deptSel ? deptSel.value : '';
   const res = await api('/api/employees', {
     method: 'POST',
-    body: { name, role: document.getElementById('empRole').value, group_name: document.getElementById('empGroup').value }
+    body: {
+      name,
+      role: document.getElementById('empRole').value,
+      group_name: document.getElementById('empGroup').value,
+      department_id: department_id ? Number(department_id) : null
+    }
   });
   if (!res) return;
   closeModal('empModal');
@@ -57,25 +75,37 @@ export async function loadUsers() {
   if (!res || !res.users) return;
   state.usersCache = res.users;
   const tbody = document.getElementById('userTableBody');
-  tbody.innerHTML = state.usersCache.map(u => `
+  tbody.innerHTML = state.usersCache.map(u => {
+    const label = roleLabels[u.role] || u.role;
+    const badge = roleBadge[u.role] || 'P2';
+    // Determine next role in cycle: employee -> dept_leader -> admin -> employee
+    let nextRole, nextLabel;
+    if (u.role === 'employee') { nextRole = 'dept_leader'; nextLabel = '升为部门负责人'; }
+    else if (u.role === 'dept_leader') { nextRole = 'admin'; nextLabel = '升为管理员'; }
+    else { nextRole = 'employee'; nextLabel = '降为员工'; }
+    return `
     <tr>
       <td>${esc(u.username)}</td>
       <td>${esc(u.employee_name) || '-'}</td>
-      <td><span class="badge badge-${u.role === 'admin' ? 'P0' : 'P2'}">${u.role === 'admin' ? '管理员' : '员工'}</span></td>
+      <td><span class="badge badge-${badge}">${label}</span></td>
       <td>
         <button class="btn btn-secondary btn-sm" data-action="renameUser" data-id="${u.id}">改名</button>
-        <button class="btn btn-secondary btn-sm" data-action="toggleUserRole" data-id="${u.id}">${u.role === 'admin' ? '降为员工' : '升为管理员'}</button>
+        <button class="btn btn-secondary btn-sm" data-action="toggleUserRole" data-id="${u.id}">${nextLabel}</button>
         <button class="btn btn-danger btn-sm" data-action="deleteUser" data-id="${u.id}">删除账号</button>
       </td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 }
 
 export async function toggleUserRole(userId) {
   const u = state.usersCache.find(x => x.id === userId);
   if (!u) return;
+  let nextRole;
+  if (u.role === 'employee') nextRole = 'dept_leader';
+  else if (u.role === 'dept_leader') nextRole = 'admin';
+  else nextRole = 'employee';
   const res = await api('/api/auth/users/' + userId + '/role', {
-    method: 'PUT', body: { role: u.role === 'admin' ? 'employee' : 'admin' }
+    method: 'PUT', body: { role: nextRole }
   });
   if (!res) return;
   toast('权限已更新');

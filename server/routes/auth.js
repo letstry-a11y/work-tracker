@@ -2,7 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { get, run, all } = require('../db');
-const { auth } = require('../auth/middleware');
+const { auth, getDeptEmployeeIds } = require('../auth/middleware');
 
 const router = express.Router();
 
@@ -69,7 +69,7 @@ router.post('/register', (req, res) => {
   if (!finalRole) {
     finalRole = isFirst ? 'admin' : 'employee';
   }
-  if (!['admin', 'employee'].includes(finalRole)) {
+  if (!['admin', 'employee', 'dept_leader'].includes(finalRole)) {
     return res.status(400).json({ error: '无效的角色' });
   }
 
@@ -158,9 +158,21 @@ router.post('/logout', auth, (req, res) => {
 // GET /me 获取当前用户信息
 router.get('/me', auth, (req, res) => {
   const user = get(
-    'SELECT u.id, u.username, u.role, u.employee_id, e.name as employee_name FROM users u LEFT JOIN employees e ON u.employee_id = e.id WHERE u.id = ?',
+    `SELECT u.id, u.username, u.role, u.employee_id, e.name as employee_name, e.department_id, d.name as department_name
+     FROM users u
+     LEFT JOIN employees e ON u.employee_id = e.id
+     LEFT JOIN departments d ON e.department_id = d.id
+     WHERE u.id = ?`,
     [req.user.id]
   );
+  // For dept_leader, also include the department they lead
+  if (user && user.role === 'dept_leader' && user.employee_id) {
+    const dept = get('SELECT id, name FROM departments WHERE leader_employee_id = ?', [user.employee_id]);
+    if (dept) {
+      user.leader_department_id = dept.id;
+      user.leader_department_name = dept.name;
+    }
+  }
   res.json(user);
 });
 
@@ -181,7 +193,7 @@ router.put('/users/:id/role', auth, (req, res) => {
     return res.status(403).json({ error: '权限不足' });
   }
   const { role } = req.body;
-  if (!['admin', 'employee'].includes(role)) {
+  if (!['admin', 'employee', 'dept_leader'].includes(role)) {
     return res.status(400).json({ error: '无效的角色' });
   }
   const { id } = req.params;
@@ -316,7 +328,26 @@ router.get('/me/stats', auth, (req, res) => {
     t.status === 'overdue' || (t.status !== 'completed' && t.deadline && t.deadline < new Date().toISOString().slice(0, 10))
   ).slice(0, 10);
 
-  res.json({ weeklyHours, totalTasks: myTasks.length, inProgressTasks, completedTasks, overdueTasks, pendingTasks, myTasks, myObjectives, overdueList, weekStart });
+  const result = { weeklyHours, totalTasks: myTasks.length, inProgressTasks, completedTasks, overdueTasks, pendingTasks, myTasks, myObjectives, overdueList, weekStart };
+
+  // dept_leader: add department stats
+  if (req.user.role === 'dept_leader') {
+    const dept = get('SELECT id, name FROM departments WHERE leader_employee_id = ?', [empId]);
+    if (dept) {
+      const deptEmpIds = getDeptEmployeeIds(dept.id);
+      result.department_name = dept.name;
+      result.department_member_count = deptEmpIds.length;
+      if (deptEmpIds.length > 0) {
+        const ph = deptEmpIds.map(() => '?').join(',');
+        const deptTaskStats = get(`SELECT COUNT(*) as total, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as completed, SUM(CASE WHEN confirm_status='pending' THEN 1 ELSE 0 END) as pending_review FROM tasks WHERE assignee_id IN (${ph})`, deptEmpIds);
+        result.dept_total_tasks = deptTaskStats.total || 0;
+        result.dept_completed_tasks = deptTaskStats.completed || 0;
+        result.dept_pending_reviews = deptTaskStats.pending_review || 0;
+      }
+    }
+  }
+
+  res.json(result);
 });
 
 module.exports = router;

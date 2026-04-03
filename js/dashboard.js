@@ -6,7 +6,10 @@ import { esc, statusText, parseLocalDate, toDateStr } from './utils.js';
 import { loadWeeklyGrid } from './weeklyGrid.js';
 
 export async function loadDashboard() {
-  const data = await api('/api/dashboard');
+  const deptEl = document.getElementById('dashboardDeptFilter');
+  const deptId = deptEl ? deptEl.value : '';
+  const qs = deptId ? '?department_id=' + deptId : '';
+  const data = await api('/api/dashboard' + qs);
   if (!data) return;
   document.getElementById('dashboardStats').innerHTML = `
     <div class="stat-card info">

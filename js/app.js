@@ -12,6 +12,7 @@ import { loadDeliverables, showDeliverableUploadModal, saveDeliverable, deleteDe
 import { loadReviews, doReviewConfirm, showReject, doReject, doReviewDelete } from './reviews.js';
 import { loadEmployees, deleteEmployee, showEmployeeModal, saveEmployee, loadUsers, toggleUserRole, renameUser, doRenameUser, deleteUser, showUserModal, saveUser } from './employees.js';
 import { loadWeeklyGrid, gridPrevWeek, gridNextWeek, showGridDetail } from './weeklyGrid.js';
+import { loadDepartments, showDeptModal, saveDept, deleteDept, manageDeptMembers, saveDeptMembers } from './departments.js';
 
 // Set up the login page reference for API module
 setShowLoginPage(showLoginPage);
@@ -26,14 +27,17 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    const isAdmin = state.currentUser && state.currentUser.role === 'admin';
+    const isDeptLeader = state.currentUser && state.currentUser.role === 'dept_leader';
     const loaders = {
-      dashboard: () => state.currentUser.role === 'admin' ? loadDashboard() : loadEmpDashboard(),
+      dashboard: () => (isAdmin || isDeptLeader) ? loadDashboard() : loadEmpDashboard(),
       objectives: loadObjectives,
       tasks: loadTasks,
       'daily-log': loadDailyLogs,
       deliverables: loadDeliverables,
       reviews: loadReviews,
-      employees: loadEmployees
+      employees: loadEmployees,
+      departments: loadDepartments
     };
     if (loaders[btn.dataset.tab]) loaders[btn.dataset.tab]();
   });
@@ -70,6 +74,14 @@ document.body.addEventListener('click', (e) => {
     case 'doRenameUser': doRenameUser(); break;
     case 'toggleUserRole': toggleUserRole(id); break;
     case 'deleteUser': deleteUser(id); break;
+
+    // Departments
+    case 'showDeptModal': showDeptModal(); break;
+    case 'editDept': showDeptModal(id); break;
+    case 'saveDept': saveDept(); break;
+    case 'deleteDept': deleteDept(id); break;
+    case 'manageDeptMembers': manageDeptMembers(id); break;
+    case 'saveDeptMembers': saveDeptMembers(); break;
 
     // Objectives
     case 'showObjModal': showObjModal(); break;
@@ -167,9 +179,9 @@ document.addEventListener('keydown', (e) => {
     }
   }
 
-  // Ctrl+1~7 switch tabs
+  // Ctrl+1~8 switch tabs
   if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-    const tabMap = { '1': 'dashboard', '2': 'objectives', '3': 'tasks', '4': 'daily-log', '5': 'deliverables', '6': 'reviews', '7': 'employees' };
+    const tabMap = { '1': 'dashboard', '2': 'objectives', '3': 'tasks', '4': 'daily-log', '5': 'deliverables', '6': 'reviews', '7': 'departments', '8': 'employees' };
     if (tabMap[e.key]) {
       e.preventDefault();
       const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabMap[e.key]}"]`);
@@ -184,20 +196,47 @@ async function initApp() {
   if (!me || !me.id) { showLoginPage(); return; }
   state.currentUser = me;
 
-  const isAdmin = state.currentUser.role === 'admin';
-  document.getElementById('currentUserName').textContent = (isAdmin ? '管理员' : '员工') + '：' + (state.currentUser.username || '');
+  const isAdmin = me.role === 'admin';
+  const isDeptLeader = me.role === 'dept_leader';
+  const isLeaderOrAdmin = isAdmin || isDeptLeader;
+
+  const roleLabel = isAdmin ? '管理员' : (isDeptLeader ? '部门负责人' : '员工');
+  document.getElementById('currentUserName').textContent = roleLabel + '：' + (me.username || '');
   document.getElementById('headerSubtitle').textContent = me.employee_name ? '你好，' + me.employee_name : '';
 
-  // 员工管理 Tab（仅管理员可见）
+  // Tab visibility
   document.getElementById('empTabBtn').style.display = isAdmin ? '' : 'none';
+  document.getElementById('deptTabBtn').style.display = isAdmin ? '' : 'none';
 
   // Load employees cache
   const empData = await api('/api/employees');
   if (empData) {
     state.employeesCache = empData;
   }
-  const empOpts = state.employeesCache.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+
+  // Load departments cache
+  const deptData = await api('/api/departments');
+  if (deptData) {
+    state.departmentsCache = deptData;
+  }
+
+  // For dept_leader, determine which employees are in their department
+  let deptEmployeeIds = null;
+  if (isDeptLeader && me.leader_department_id) {
+    deptEmployeeIds = state.employeesCache
+      .filter(e => e.department_id === me.leader_department_id)
+      .map(e => e.id);
+  }
+
+  // Build employee options - for dept_leader, limit to department members
+  const visibleEmployees = (isDeptLeader && deptEmployeeIds)
+    ? state.employeesCache.filter(e => deptEmployeeIds.includes(e.id))
+    : state.employeesCache;
+
+  const empOpts = visibleEmployees.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+  const allEmpOpts = state.employeesCache.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
   const filterEmpOpts = '<option value="">全部</option>' + empOpts;
+
   document.getElementById('logEmployee').innerHTML = empOpts;
   document.getElementById('taskAssignee').innerHTML = '<option value="">无</option>' + empOpts;
   document.getElementById('objEmployee').innerHTML = empOpts;
@@ -206,6 +245,54 @@ async function initApp() {
   document.getElementById('taskFilterAssignee').innerHTML = filterEmpOpts;
   document.getElementById('delivEmpFilter').innerHTML = filterEmpOpts;
   document.getElementById('reviewEmpFilter').innerHTML = filterEmpOpts;
+
+  // Populate department filter dropdowns (admin only sees these)
+  const deptOpts = '<option value="">全部</option>' + (state.departmentsCache || [])
+    .map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+  ['dashboardDeptFilter', 'objFilterDept', 'taskFilterDept', 'logFilterDept', 'delivDeptFilter', 'reviewDeptFilter'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = deptOpts;
+  });
+
+  // Helper: link department dropdown to employee dropdown
+  // When department changes, filter employee options and trigger data reload
+  function setupDeptEmpLink(deptSelectId, empSelectId, loadFn) {
+    const deptEl = document.getElementById(deptSelectId);
+    const empEl = document.getElementById(empSelectId);
+    if (!deptEl || !empEl) return;
+    deptEl.addEventListener('change', () => {
+      const deptId = deptEl.value;
+      const filtered = deptId
+        ? visibleEmployees.filter(e => String(e.department_id) === deptId)
+        : visibleEmployees;
+      empEl.innerHTML = '<option value="">全部</option>' + filtered.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+      if (loadFn) loadFn();
+    });
+  }
+
+  // Setup dept-employee linkage for pages with both filters
+  setupDeptEmpLink('objFilterDept', 'objFilterEmployee', loadObjectives);
+  setupDeptEmpLink('taskFilterDept', 'taskFilterAssignee', loadTasks);
+  setupDeptEmpLink('delivDeptFilter', 'delivEmpFilter', loadDeliverables);
+  setupDeptEmpLink('reviewDeptFilter', 'reviewEmpFilter', loadReviews);
+
+  // Daily log: dept filter links to logEmployee (no "全部" option for log employee)
+  const logDeptEl = document.getElementById('logFilterDept');
+  if (logDeptEl) {
+    logDeptEl.addEventListener('change', () => {
+      const deptId = logDeptEl.value;
+      const filtered = deptId
+        ? visibleEmployees.filter(e => String(e.department_id) === deptId)
+        : visibleEmployees;
+      const logEmpEl = document.getElementById('logEmployee');
+      logEmpEl.innerHTML = filtered.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+      loadDailyLogs();
+    });
+  }
+
+  // Dashboard: dept filter directly triggers reload (no employee dropdown)
+  const dashDeptEl = document.getElementById('dashboardDeptFilter');
+  if (dashDeptEl) dashDeptEl.addEventListener('change', loadDashboard);
 
   // Load objectives cache and populate filter/modal selectors
   const objData = await api('/api/objectives');
@@ -239,21 +326,33 @@ async function initApp() {
   });
 
   // 员工自动选中自己
-  if (!isAdmin && state.currentUser.employee_id) {
+  if (!isLeaderOrAdmin && state.currentUser.employee_id) {
     document.getElementById('logEmployee').value = state.currentUser.employee_id;
     document.getElementById('logEmpFilterGroup').querySelector('label').textContent = '员工';
   }
 
-  // UI visibility toggles
-  document.getElementById('adminDelivBar').style.display = isAdmin ? '' : 'none';
-  document.getElementById('empDelivBar').style.display = isAdmin ? 'none' : '';
-  document.getElementById('reviewEmpFilterGroup').style.display = isAdmin ? '' : 'none';
-  document.getElementById('adminTaskFilters').style.display = isAdmin ? '' : 'none';
-  document.getElementById('btnCreateTask').style.display = isAdmin ? '' : 'none';
-  document.getElementById('objFilterBar').style.display = isAdmin ? '' : 'none';
-  document.getElementById('btnCreateObj').style.display = isAdmin ? '' : 'none';
-  document.getElementById('adminDashboard').style.display = isAdmin ? '' : 'none';
-  document.getElementById('empDashboard').style.display = isAdmin ? 'none' : '';
+  // UI visibility toggles - dept_leader sees filter bars and can create tasks/objectives
+  document.getElementById('adminDelivBar').style.display = isLeaderOrAdmin ? '' : 'none';
+  document.getElementById('empDelivBar').style.display = isLeaderOrAdmin ? 'none' : '';
+  document.getElementById('reviewEmpFilterGroup').style.display = isLeaderOrAdmin ? '' : 'none';
+  document.getElementById('adminTaskFilters').style.display = isLeaderOrAdmin ? '' : 'none';
+  document.getElementById('btnCreateTask').style.display = isLeaderOrAdmin ? '' : 'none';
+  document.getElementById('objFilterBar').style.display = isLeaderOrAdmin ? '' : 'none';
+  document.getElementById('btnCreateObj').style.display = isLeaderOrAdmin ? '' : 'none';
+  document.getElementById('adminDashboard').style.display = isLeaderOrAdmin ? '' : 'none';
+  document.getElementById('empDashboard').style.display = isLeaderOrAdmin ? 'none' : '';
+
+  // Department filter visibility: only admin sees dept filters (dept_leader already scoped by backend)
+  const deptFilterDisplay = isAdmin ? '' : 'none';
+  ['dashboardFilterBar', 'logDeptFilterGroup'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = deptFilterDisplay;
+  });
+  // Hide individual dept selects inside shared filter bars for non-admin
+  ['objFilterDept', 'taskFilterDept', 'delivDeptFilter', 'reviewDeptFilter'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.closest('.form-group').style.display = deptFilterDisplay;
+  });
 
   // Daily log defaults
   document.getElementById('logDate').value = todayStr();
@@ -296,7 +395,7 @@ async function initApp() {
 
   showAppPage();
 
-  if (isAdmin) {
+  if (isLeaderOrAdmin) {
     loadDashboard();
   } else {
     loadEmpDashboard();

@@ -23,12 +23,13 @@ export async function loadTasks() {
 
   const tbody = document.getElementById('taskTableBody');
   const isAdmin = state.currentUser.role === 'admin';
+  const canManage = isAdmin || state.currentUser.role === 'dept_leader';
 
   tbody.innerHTML = (state.tasksCache || []).map(t => {
     const csBadge = t.confirm_status && t.confirm_status !== 'none'
       ? `<span class="badge badge-${t.confirm_status === 'pending' ? 'P1' : t.confirm_status === 'confirmed' ? 'completed' : 'overdue'}" style="margin-left:6px;font-size:10px">${confirmStatusText(t.confirm_status)}</span>` : '';
     let actions = '';
-    if (isAdmin) {
+    if (canManage) {
       if (t.confirm_status === 'pending') {
         actions = `<button class="btn btn-success btn-sm" data-action="reviewConfirm" data-type="task" data-id="${t.id}">通过</button>
                    <button class="btn btn-danger btn-sm" data-action="showReject" data-type="task" data-id="${t.id}">打回</button>`;
@@ -89,9 +90,9 @@ export function editTask(id) {
   document.getElementById('taskDifficulty').value = t.difficulty;
   document.getElementById('taskEstHours').value = t.estimated_hours;
   document.getElementById('taskDeadline').value = t.deadline || '';
-  // Admin gets "已完成" option
+  // Admin/dept_leader gets "已完成" option
   const statusEl = document.getElementById('taskStatus');
-  if (state.currentUser.role === 'admin' && !statusEl.querySelector('option[value="completed"]')) {
+  if ((state.currentUser.role === 'admin' || state.currentUser.role === 'dept_leader') && !statusEl.querySelector('option[value="completed"]')) {
     statusEl.insertAdjacentHTML('beforeend', '<option value="completed">已完成</option>');
   }
   statusEl.value = t.status;

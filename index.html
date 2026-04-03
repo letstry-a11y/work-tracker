@@ -58,6 +58,7 @@
     <button class="tab-btn" data-tab="daily-log"><span class="tab-icon">&#128221;</span> 每日填报</button>
     <button class="tab-btn" data-tab="deliverables"><span class="tab-icon">&#128230;</span> 交付物管理</button>
     <button class="tab-btn" data-tab="reviews"><span class="tab-icon">&#128269;</span> 审核记录</button>
+    <button class="tab-btn" data-tab="departments" id="deptTabBtn"><span class="tab-icon">&#127970;</span> 部门管理</button>
     <button class="tab-btn" data-tab="employees" id="empTabBtn"><span class="tab-icon">&#128101;</span> 员工管理</button>
   </nav>
 
@@ -66,6 +67,12 @@
   <!-- ===== 仪表盘 ===== -->
   <section id="tab-dashboard" class="tab-content active" aria-label="仪表盘">
     <div id="adminDashboard">
+      <div class="filter-bar" id="dashboardFilterBar">
+        <div class="form-group">
+          <label>&#127970; 部门</label>
+          <select id="dashboardDeptFilter"><option value="">全部</option></select>
+        </div>
+      </div>
       <div class="stat-grid" id="dashboardStats"></div>
       <div class="card">
         <div class="card-header-row">
@@ -104,6 +111,10 @@
   <section id="tab-objectives" class="tab-content" aria-label="目标管理">
     <div class="filter-bar" id="objFilterBar">
       <div class="form-group">
+        <label>&#127970; 部门</label>
+        <select id="objFilterDept"><option value="">全部</option></select>
+      </div>
+      <div class="form-group">
         <label>&#128101; 选择员工</label>
         <select id="objFilterEmployee" onchange=""><option value="">全部</option></select>
       </div>
@@ -115,6 +126,10 @@
   <!-- ===== 任务管理 ===== -->
   <section id="tab-tasks" class="tab-content" aria-label="任务管理">
     <div class="filter-bar" id="adminTaskFilters">
+      <div class="form-group">
+        <label>&#127970; 部门</label>
+        <select id="taskFilterDept"><option value="">全部</option></select>
+      </div>
       <div class="form-group">
         <label>&#128100; 负责人</label>
         <select id="taskFilterAssignee"><option value="">全部</option></select>
@@ -161,6 +176,10 @@
   <!-- ===== 每日填报 ===== -->
   <section id="tab-daily-log" class="tab-content" aria-label="每日填报">
     <div class="filter-bar">
+      <div class="form-group" id="logDeptFilterGroup">
+        <label>&#127970; 部门</label>
+        <select id="logFilterDept"><option value="">全部</option></select>
+      </div>
       <div class="form-group" id="logEmpFilterGroup">
         <label>&#128101; 选择员工</label>
         <select id="logEmployee"></select>
@@ -189,6 +208,10 @@
   <section id="tab-deliverables" class="tab-content" aria-label="交付物管理">
     <div class="filter-bar" id="adminDelivBar">
       <div class="form-group">
+        <label>&#127970; 部门</label>
+        <select id="delivDeptFilter"><option value="">全部</option></select>
+      </div>
+      <div class="form-group">
         <label>&#128100; 上传人</label>
         <select id="delivEmpFilter"><option value="">全部</option></select>
       </div>
@@ -210,6 +233,10 @@
   <!-- ===== 审核记录 ===== -->
   <section id="tab-reviews" class="tab-content" aria-label="审核记录">
     <div class="filter-bar" id="reviewFilterBar">
+      <div class="form-group">
+        <label>&#127970; 部门</label>
+        <select id="reviewDeptFilter"><option value="">全部</option></select>
+      </div>
       <div class="form-group">
         <label>&#128196; 类型</label>
         <select id="reviewTypeFilter">
@@ -238,6 +265,24 @@
     </div>
   </section>
 
+  <!-- ===== 部门管理 ===== -->
+  <section id="tab-departments" class="tab-content" aria-label="部门管理">
+    <div class="card">
+      <div class="card-title"><span class="card-title-accent"></span> &#127970; 部门列表</div>
+      <div class="btn-group" style="margin-bottom:12px">
+        <button class="btn btn-primary" data-action="showDeptModal">&#10010; 创建部门</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>部门名称</th><th>负责人</th><th>成员数</th><th>创建时间</th><th>操作</th></tr>
+          </thead>
+          <tbody id="deptTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <!-- ===== 员工管理 ===== -->
   <section id="tab-employees" class="tab-content" aria-label="员工管理">
     <div class="card">
@@ -248,7 +293,7 @@
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>ID</th><th>姓名</th><th>组别</th><th>创建时间</th><th>操作</th></tr>
+            <tr><th>ID</th><th>姓名</th><th>部门</th><th>创建时间</th><th>操作</th></tr>
           </thead>
           <tbody id="empTableBody"></tbody>
         </table>
@@ -370,6 +415,9 @@
         <div class="form-group"><label>角色</label><input id="empRole" placeholder="如: 前端开发"></div>
         <div class="form-group"><label>组别</label><input id="empGroup" placeholder="如: A组"></div>
       </div>
+      <div class="form-row">
+        <div class="form-group"><label>所属部门</label><select id="empDepartment"><option value="">无</option></select></div>
+      </div>
       <div class="btn-group">
         <button class="btn btn-primary" data-action="saveEmployee">&#10004; 保存</button>
         <button class="btn btn-secondary" data-action="closeModal" data-modal="empModal">取消</button>
@@ -442,7 +490,7 @@
       </div>
       <div class="form-row">
         <div class="form-group"><label>角色</label>
-          <select id="userRole"><option value="employee">普通员工</option><option value="admin">管理员</option></select>
+          <select id="userRole"><option value="employee">普通员工</option><option value="dept_leader">部门负责人</option><option value="admin">管理员</option></select>
         </div>
       </div>
       <div class="btn-group">
@@ -512,6 +560,37 @@
       <div class="btn-group">
         <button class="btn btn-danger" data-action="doReject">&#10006; 确认打回</button>
         <button class="btn btn-secondary" data-action="closeModal" data-modal="rejectModal">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 部门编辑弹窗 -->
+  <div class="modal-overlay" id="deptModal" role="dialog" aria-modal="true" aria-label="部门编辑">
+    <div class="modal">
+      <h3 id="deptModalTitle">&#127970; 创建部门</h3>
+      <input type="hidden" id="deptEditId">
+      <div class="form-row">
+        <div class="form-group"><label>部门名称</label><input id="deptName" placeholder="如: 研发部"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>部门负责人</label><select id="deptLeader"><option value="">无</option></select></div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" data-action="saveDept">&#10004; 保存</button>
+        <button class="btn btn-secondary" data-action="closeModal" data-modal="deptModal">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 部门成员管理弹窗 -->
+  <div class="modal-overlay" id="deptMembersModal" role="dialog" aria-modal="true" aria-label="部门成员管理">
+    <div class="modal" style="max-width:500px">
+      <h3 id="deptMembersTitle">&#128101; 管理成员</h3>
+      <input type="hidden" id="deptMembersId">
+      <div id="deptMembersList" style="max-height:400px;overflow-y:auto;padding:8px 0"></div>
+      <div class="btn-group">
+        <button class="btn btn-primary" data-action="saveDeptMembers">&#10004; 保存</button>
+        <button class="btn btn-secondary" data-action="closeModal" data-modal="deptMembersModal">取消</button>
       </div>
     </div>
   </div>

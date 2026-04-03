@@ -1,9 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const { all, get, run } = require('../db');
+const { getDeptEmployeeIds } = require('../auth/middleware');
 
 function canAccessTask(task, user) {
   if (user.role === 'admin') return true;
+  if (user.role === 'dept_leader' && user.department_id) {
+    const deptEmpIds = getDeptEmployeeIds(user.department_id);
+    if (deptEmpIds.includes(task.assignee_id)) return true;
+  }
   return task.assignee_id === user.employee_id;
 }
 
@@ -32,7 +37,15 @@ router.get('/', (req, res) => {
   let sql = 'SELECT t.*, e.name as assignee_name, o.title as objective_title FROM tasks t LEFT JOIN employees e ON t.assignee_id = e.id LEFT JOIN objectives o ON t.objective_id = o.id WHERE 1=1';
   const params = [];
 
-  if (req.user.role !== 'admin') {
+  if (req.user.role === 'dept_leader' && req.user.department_id) {
+    const deptEmpIds = getDeptEmployeeIds(req.user.department_id);
+    if (deptEmpIds.length > 0) {
+      sql += ` AND t.assignee_id IN (${deptEmpIds.map(() => '?').join(',')})`;
+      params.push(...deptEmpIds);
+    } else {
+      sql += ' AND 1=0';
+    }
+  } else if (req.user.role !== 'admin') {
     if (req.user.employee_id) {
       sql += ' AND t.assignee_id = ?';
       params.push(req.user.employee_id);
@@ -85,7 +98,16 @@ router.post('/', (req, res) => {
   if (!title) return res.status(400).json({ error: '任务标题不能为空' });
 
   let finalAssignee = assignee_id ? Number(assignee_id) : null;
-  if (req.user.role !== 'admin' && req.user.employee_id) {
+
+  if (req.user.role === 'dept_leader') {
+    // dept_leader can create tasks for dept members
+    if (finalAssignee) {
+      const deptEmpIds = getDeptEmployeeIds(req.user.department_id);
+      if (!deptEmpIds.includes(finalAssignee)) {
+        return res.status(403).json({ error: '只能为本部门成员创建任务' });
+      }
+    }
+  } else if (req.user.role !== 'admin' && req.user.employee_id) {
     finalAssignee = req.user.employee_id;
   }
 
@@ -154,7 +176,7 @@ router.post('/:id/apply-complete', (req, res) => {
   const task = get('SELECT * FROM tasks WHERE id = ?', [Number(req.params.id)]);
   if (!task) return res.status(404).json({ error: '任务不存在' });
 
-  if (req.user.role !== 'admin' && task.assignee_id !== req.user.employee_id) {
+  if (req.user.role !== 'admin' && req.user.role !== 'dept_leader' && task.assignee_id !== req.user.employee_id) {
     return res.status(403).json({ error: '只能操作自己的任务' });
   }
 
@@ -180,8 +202,14 @@ router.put('/:id/confirm', (req, res) => {
   const task = get('SELECT * FROM tasks WHERE id = ?', [Number(req.params.id)]);
   if (!task) return res.status(404).json({ error: '任务不存在' });
 
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: '只有管理员可以确认任务' });
+  // Allow admin or dept_leader (for their dept members)
+  if (req.user.role === 'dept_leader') {
+    const deptEmpIds = getDeptEmployeeIds(req.user.department_id);
+    if (!deptEmpIds.includes(task.assignee_id)) {
+      return res.status(403).json({ error: '只能审核本部门成员的任务' });
+    }
+  } else if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: '只有管理员或部门负责人可以确认任务' });
   }
 
   const { action, reject_reason } = req.body;

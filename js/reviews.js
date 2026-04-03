@@ -7,7 +7,8 @@ import { toast, closeModal, esc, confirmStatusText, confirmDialog } from './util
 export async function loadReviews() {
   const type = document.getElementById('reviewTypeFilter') && document.getElementById('reviewTypeFilter').value;
   const status = document.getElementById('reviewStatusFilter') && document.getElementById('reviewStatusFilter').value;
-  const empId = state.currentUser.role === 'admin'
+  const isLeaderOrAdmin = state.currentUser.role === 'admin' || state.currentUser.role === 'dept_leader';
+  const empId = isLeaderOrAdmin
     ? (document.getElementById('reviewEmpFilter') && document.getElementById('reviewEmpFilter').value)
     : state.currentUser.employee_id;
 
@@ -19,6 +20,7 @@ export async function loadReviews() {
   const items = await api(url);
   if (!items) return;
   const isAdmin = state.currentUser.role === 'admin';
+  const canReview = isAdmin || state.currentUser.role === 'dept_leader';
   document.getElementById('reviewCount').textContent = `（共 ${items.length} 条）`;
 
   document.getElementById('reviewsList').innerHTML = items.map(item => {
@@ -29,11 +31,11 @@ export async function loadReviews() {
     const timeStr = item.confirmed_at ? item.confirmed_at.slice(0, 16).replace('T', ' ') : (item.created_at ? item.created_at.slice(0, 10) : '-');
     const noteStr = item.confirm_note ? `<div style="margin-top:4px;font-size:12px;color:var(--text-muted)">${item.confirm_status === 'rejected' ? '打回原因：' : '说明：'}${esc(item.confirm_note)}</div>` : '';
     let actions = '';
-    if (isAdmin && item.confirm_status === 'pending') {
+    if (canReview && item.confirm_status === 'pending') {
       actions = `<button class="btn btn-success btn-sm" data-action="reviewConfirm" data-type="${item.item_type}" data-id="${item.id}" style="margin-left:8px">通过</button>
                  <button class="btn btn-danger btn-sm" data-action="showReject" data-type="${item.item_type}" data-id="${item.id}">打回</button>`;
     }
-    if (!isAdmin) {
+    if (!canReview) {
       actions = `<button class="btn btn-danger btn-sm" data-action="reviewDelete" data-type="${item.item_type}" data-id="${item.id}" style="margin-left:8px">删除记录</button>`;
     }
     return `<div class="review-item">

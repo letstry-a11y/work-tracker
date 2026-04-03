@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { all, get, run } = require('../db');
-const { auth } = require('../auth/middleware');
+const { auth, getDeptEmployeeIds } = require('../auth/middleware');
 
 // GET /api/objectives - Fix 3.3: Eliminate N+1 queries
 router.get('/', auth, (req, res) => {
@@ -9,7 +9,16 @@ router.get('/', auth, (req, res) => {
   let sql = 'SELECT o.*, e.name as employee_name FROM objectives o LEFT JOIN employees e ON o.employee_id = e.id WHERE 1=1';
   const params = [];
   if (employee_id) { sql += ' AND o.employee_id = ?'; params.push(Number(employee_id)); }
-  if (req.user.role !== 'admin' && req.user.employee_id) {
+
+  if (req.user.role === 'dept_leader' && req.user.department_id) {
+    const deptEmpIds = getDeptEmployeeIds(req.user.department_id);
+    if (deptEmpIds.length > 0) {
+      sql += ` AND o.employee_id IN (${deptEmpIds.map(() => '?').join(',')})`;
+      params.push(...deptEmpIds);
+    } else {
+      sql += ' AND 1=0';
+    }
+  } else if (req.user.role !== 'admin' && req.user.employee_id) {
     sql += ' AND o.employee_id = ?';
     params.push(req.user.employee_id);
   }
@@ -50,8 +59,6 @@ router.get('/', auth, (req, res) => {
     for (const obj of objectives) {
       obj.key_results = krsMap[obj.id] || [];
     }
-  } else {
-    // No objectives, nothing to attach
   }
 
   res.json(objectives);
@@ -59,18 +66,39 @@ router.get('/', auth, (req, res) => {
 
 // POST /api/objectives
 router.post('/', auth, (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: '权限不足' });
   const { title, weight, employee_id } = req.body;
   if (!title) return res.status(400).json({ error: '目标名称不能为空' });
+
+  // dept_leader can create for their department members
+  if (req.user.role === 'dept_leader') {
+    if (employee_id) {
+      const deptEmpIds = getDeptEmployeeIds(req.user.department_id);
+      if (!deptEmpIds.includes(Number(employee_id))) {
+        return res.status(403).json({ error: '只能为本部门成员创建目标' });
+      }
+    }
+  } else if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: '权限不足' });
+  }
+
   const result = run('INSERT INTO objectives (title, weight, employee_id) VALUES (?, ?, ?)', [title, weight || 0, employee_id ? Number(employee_id) : null]);
   res.json({ id: result.lastInsertRowid });
 });
 
 // PUT /api/objectives/:id
 router.put('/:id', auth, (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: '权限不足' });
   const obj = get('SELECT * FROM objectives WHERE id = ?', [Number(req.params.id)]);
   if (!obj) return res.status(404).json({ error: '目标不存在' });
+
+  if (req.user.role === 'dept_leader') {
+    const deptEmpIds = getDeptEmployeeIds(req.user.department_id);
+    if (!deptEmpIds.includes(obj.employee_id)) {
+      return res.status(403).json({ error: '只能编辑本部门成员的目标' });
+    }
+  } else if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: '权限不足' });
+  }
+
   const { title, weight, employee_id } = req.body;
   run('UPDATE objectives SET title=?, weight=?, employee_id=? WHERE id=?', [
     title !== undefined ? title : obj.title,
@@ -83,7 +111,18 @@ router.put('/:id', auth, (req, res) => {
 
 // DELETE /api/objectives/:id
 router.delete('/:id', auth, (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: '权限不足' });
+  const obj = get('SELECT * FROM objectives WHERE id = ?', [Number(req.params.id)]);
+  if (!obj) return res.status(404).json({ error: '目标不存在' });
+
+  if (req.user.role === 'dept_leader') {
+    const deptEmpIds = getDeptEmployeeIds(req.user.department_id);
+    if (!deptEmpIds.includes(obj.employee_id)) {
+      return res.status(403).json({ error: '只能删除本部门成员的目标' });
+    }
+  } else if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: '权限不足' });
+  }
+
   run('DELETE FROM objectives WHERE id = ?', [Number(req.params.id)]);
   res.json({ success: true });
 });

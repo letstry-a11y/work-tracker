@@ -7,7 +7,10 @@ import { esc, parseLocalDate, toDateStr, closeModal } from './utils.js';
 export async function loadWeeklyGrid(weekStart) {
   if (!weekStart) weekStart = state.gridWeekStart;
   state.gridWeekStart = weekStart;
-  const data = await api('/api/dashboard/weekly-grid?week_start=' + weekStart);
+  const deptEl = document.getElementById('dashboardDeptFilter');
+  const deptId = deptEl ? deptEl.value : '';
+  const deptParam = deptId ? '&department_id=' + deptId : '';
+  const data = await api('/api/dashboard/weekly-grid?week_start=' + weekStart + deptParam);
   if (!data) return;
   document.getElementById('gridWeekLabel').textContent = weekStart + ' ~ ' + data.weekEnd;
   const container = document.getElementById('weeklyGrid');

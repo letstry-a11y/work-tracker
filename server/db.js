@@ -172,17 +172,79 @@ async function initDb() {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 
+  // Departments table
   db.run(`
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE IF NOT EXISTS departments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      role TEXT DEFAULT 'employee' CHECK(role IN ('admin', 'employee')),
-      employee_id INTEGER,
-      created_at TEXT DEFAULT (datetime('now', 'localtime')),
-      FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE SET NULL
+      name TEXT NOT NULL UNIQUE,
+      leader_employee_id INTEGER,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (leader_employee_id) REFERENCES employees(id) ON DELETE SET NULL
     )
   `);
+
+  // Migration: add department_id to employees
+  try {
+    const empCols = all("PRAGMA table_info(employees)");
+    if (!empCols.some(c => c.name === 'department_id')) {
+      db.run("ALTER TABLE employees ADD COLUMN department_id INTEGER DEFAULT NULL");
+      db.run("CREATE INDEX IF NOT EXISTS idx_employees_department ON employees(department_id)");
+    }
+    saveDbSync();
+  } catch (e) { /* migration already done */ }
+
+  // Users table - check if we need to rebuild for dept_leader role support
+  const usersExists = get("SELECT name FROM sqlite_master WHERE type='table' AND name='users'");
+  if (usersExists) {
+    // Check current CHECK constraint by trying to see if dept_leader is valid
+    const usersSql = get("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'");
+    if (usersSql && usersSql.sql && !usersSql.sql.includes('dept_leader')) {
+      // Rebuild users table to support dept_leader role
+      db.run(`CREATE TABLE IF NOT EXISTS users_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        role TEXT DEFAULT 'employee' CHECK(role IN ('admin','employee','dept_leader')),
+        employee_id INTEGER,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE SET NULL
+      )`);
+      db.run("INSERT INTO users_new SELECT * FROM users");
+      db.run("DROP TABLE users");
+      db.run("ALTER TABLE users_new RENAME TO users");
+      db.run("CREATE INDEX IF NOT EXISTS idx_users_employee ON users(employee_id)");
+      saveDbSync();
+    }
+  } else {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        role TEXT DEFAULT 'employee' CHECK(role IN ('admin','employee','dept_leader')),
+        employee_id INTEGER,
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE SET NULL
+      )
+    `);
+  }
+
+  // Migration: auto-migrate group_name -> departments
+  try {
+    const groups = all("SELECT DISTINCT group_name FROM employees WHERE group_name IS NOT NULL AND group_name != ''");
+    for (const g of groups) {
+      const existing = get("SELECT id FROM departments WHERE name = ?", [g.group_name]);
+      if (!existing) {
+        run("INSERT INTO departments (name) VALUES (?)", [g.group_name]);
+      }
+    }
+    // Link employees to departments by group_name
+    const depts = all("SELECT id, name FROM departments");
+    for (const dept of depts) {
+      db.run("UPDATE employees SET department_id = ? WHERE group_name = ? AND (department_id IS NULL OR department_id = 0)", [dept.id, dept.name]);
+    }
+    saveDbSync();
+  } catch (e) { /* migration already done */ }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -246,6 +308,8 @@ async function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_objectives_employee ON objectives(employee_id)',
     'CREATE INDEX IF NOT EXISTS idx_weekly_scores_employee_week ON weekly_scores(employee_id, week_start)',
     'CREATE INDEX IF NOT EXISTS idx_users_employee ON users(employee_id)',
+    'CREATE INDEX IF NOT EXISTS idx_employees_department ON employees(department_id)',
+    'CREATE INDEX IF NOT EXISTS idx_departments_leader ON departments(leader_employee_id)',
   ];
   for (const idx of indexes) {
     try { db.run(idx); } catch (e) { /* index already exists */ }

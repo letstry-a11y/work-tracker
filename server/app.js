@@ -48,6 +48,7 @@ async function start() {
   app.use('/api/auth', require('./routes/auth'));
 
   // API routes (protected - require auth)
+  app.use('/api/departments',   auth, require('./routes/departments'));
   app.use('/api/employees',     auth, require('./routes/employees'));
   app.use('/api/tasks',        auth, require('./routes/tasks'));
   app.use('/api/daily-logs',   auth, require('./routes/dailyLogs'));

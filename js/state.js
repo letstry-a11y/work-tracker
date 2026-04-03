@@ -7,6 +7,7 @@ export const state = {
   tasksCache: [],
   usersCache: [],
   objectivesCache: [],
+  departmentsCache: [],
   gridWeekStart: '',
 };
 

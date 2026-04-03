@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { all, get, run } = require('../db');
+const { getDeptEmployeeIds } = require('../auth/middleware');
 
 // GET /api/daily-logs
 router.get('/', (req, res) => {
@@ -12,7 +13,16 @@ router.get('/', (req, res) => {
     WHERE 1=1`;
   const params = [];
 
-  if (req.user.role !== 'admin') {
+  if (req.user.role === 'dept_leader' && req.user.department_id) {
+    const deptEmpIds = getDeptEmployeeIds(req.user.department_id);
+    if (deptEmpIds.length > 0) {
+      sql += ` AND dl.employee_id IN (${deptEmpIds.map(() => '?').join(',')})`;
+      params.push(...deptEmpIds);
+    } else {
+      sql += ' AND 1=0';
+    }
+    if (employee_id) { sql += ' AND dl.employee_id = ?'; params.push(Number(employee_id)); }
+  } else if (req.user.role !== 'admin') {
     if (req.user.employee_id) {
       sql += ' AND dl.employee_id = ?';
       params.push(req.user.employee_id);
@@ -29,7 +39,7 @@ router.get('/', (req, res) => {
   res.json(all(sql, params));
 });
 
-// Fix 2.5: Validate work hours (single entry 0-24h, daily total ≤ 24h)
+// Fix 2.5: Validate work hours (single entry 0-24h, daily total <= 24h)
 function validateHours(hours, employeeId, date, excludeLogId) {
   if (hours < 0 || hours > 24) {
     return '单条工时必须在 0-24 小时之间';
@@ -55,7 +65,7 @@ router.post('/', (req, res) => {
   if (!date) return res.status(400).json({ error: '日期不能为空' });
 
   let finalEmployeeId = employee_id ? Number(employee_id) : null;
-  if (req.user.role !== 'admin' && req.user.employee_id) {
+  if (req.user.role !== 'admin' && req.user.role !== 'dept_leader' && req.user.employee_id) {
     finalEmployeeId = req.user.employee_id;
   }
   if (!finalEmployeeId) return res.status(400).json({ error: '员工ID不能为空' });

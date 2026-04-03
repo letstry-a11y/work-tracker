@@ -7,7 +7,8 @@ import { loadReviews } from './reviews.js';
 
 export async function loadDeliverables() {
   const isAdmin = state.currentUser.role === 'admin';
-  const empId = isAdmin ? (document.getElementById('delivEmpFilter') && document.getElementById('delivEmpFilter').value) : state.currentUser.employee_id;
+  const canReview = isAdmin || state.currentUser.role === 'dept_leader';
+  const empId = canReview ? (document.getElementById('delivEmpFilter') && document.getElementById('delivEmpFilter').value) : state.currentUser.employee_id;
   let url = '/api/deliverables';
   if (empId) url += '?employee_id=' + empId;
   const items = await api(url);
@@ -19,7 +20,7 @@ export async function loadDeliverables() {
       ? `<span class="badge badge-${d.confirm_status === 'pending' ? 'P1' : d.confirm_status === 'confirmed' ? 'completed' : 'overdue'}">${confirmStatusText(d.confirm_status)}</span>`
       : '<span style="color:var(--text-muted);font-size:12px">-</span>';
     let actions = '';
-    if (isAdmin) {
+    if (canReview) {
       if (d.confirm_status === 'pending') {
         actions = `<button class="btn btn-success btn-sm" data-action="reviewConfirm" data-type="deliverable" data-id="${d.id}">通过</button>
                    <button class="btn btn-danger btn-sm" data-action="showReject" data-type="deliverable" data-id="${d.id}">打回</button>`;
