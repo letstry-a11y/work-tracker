@@ -17,8 +17,16 @@ export async function loadTasks() {
   if (o === 'none') params.set('objective_id', '0');
   else if (o) params.set('objective_id', o);
 
-  const data = await api('/api/tasks?' + params);
+  let data = await api('/api/tasks?' + params);
   if (!data) return;
+
+  // 部门筛选：未选具体员工时，按部门内员工过滤
+  const deptId = document.getElementById('taskFilterDept') && document.getElementById('taskFilterDept').value;
+  if (deptId && !a) {
+    const deptEmpIds = (state.employeesCache || []).filter(e => String(e.department_id) === deptId).map(e => e.id);
+    data = data.filter(t => deptEmpIds.includes(t.assignee_id));
+  }
+
   state.tasksCache = data;
 
   const tbody = document.getElementById('taskTableBody');

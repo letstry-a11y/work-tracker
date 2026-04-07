@@ -91,6 +91,7 @@ export async function loadUsers() {
       <td>
         <button class="btn btn-secondary btn-sm" data-action="renameUser" data-id="${u.id}">改名</button>
         <button class="btn btn-secondary btn-sm" data-action="toggleUserRole" data-id="${u.id}">${nextLabel}</button>
+        <button class="btn btn-secondary btn-sm" data-action="resetPassword" data-id="${u.id}">重置密码</button>
         <button class="btn btn-danger btn-sm" data-action="deleteUser" data-id="${u.id}">删除账号</button>
       </td>
     </tr>`;
@@ -133,6 +134,16 @@ export async function doRenameUser() {
   closeModal('renameModal');
   toast('用户名已修改');
   loadUsers();
+}
+
+export async function resetPassword(userId) {
+  const u = state.usersCache.find(x => x.id === userId);
+  if (!u) return;
+  const ok = await confirmDialog({ title: '重置密码', message: `确认将用户 "${u.username}" 的密码重置为默认密码 123456？`, type: 'warning' });
+  if (!ok) return;
+  const res = await api('/api/auth/users/' + userId + '/reset-password', { method: 'PUT' });
+  if (!res) return;
+  toast('密码已重置为 123456');
 }
 
 export async function deleteUser(userId) {

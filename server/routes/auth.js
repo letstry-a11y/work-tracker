@@ -243,6 +243,23 @@ router.delete('/users/:id', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// PUT /users/:id/reset-password 重置用户密码（管理员用）
+router.put('/users/:id/reset-password', auth, (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: '权限不足' });
+  }
+  const { id } = req.params;
+  const user = get('SELECT id FROM users WHERE id = ?', [Number(id)]);
+  if (!user) return res.status(404).json({ error: '用户不存在' });
+
+  const newPassword = '123456';
+  const newHash = hashPassword(newPassword);
+  run('UPDATE users SET password_hash = ? WHERE id = ?', [newHash, Number(id)]);
+  // 清除该用户所有 session，强制重新登录
+  run('DELETE FROM sessions WHERE user_id = ?', [Number(id)]);
+  res.json({ ok: true, default_password: newPassword });
+});
+
 // PUT /users/:id/username 修改用户名（管理员用）
 router.put('/users/:id/username', auth, (req, res) => {
   if (req.user.role !== 'admin') {

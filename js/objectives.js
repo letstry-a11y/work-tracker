@@ -176,14 +176,16 @@ function renderObjective(obj, canManage, isAdmin, isDeptLeader) {
     const krActions = canManage ? `<button class="btn btn-secondary btn-sm" data-action="editKR" data-id="${kr.id}">编辑</button>
             <button class="btn btn-danger btn-sm" data-action="deleteKR" data-id="${kr.id}">删除</button>` : '';
     return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
-      <span style="flex:1;min-width:0">
-        <span class="badge badge-okr" style="font-size:9px;margin-right:4px">OKR</span>
-        <a href="#" class="kr-task-link" data-action="viewTaskFromKR" data-obj-id="${kr.objective_id}"
-           style="color:var(--text);text-decoration:none;border-bottom:1px dashed var(--text-muted)">
-          ${esc(kr.title)}
-        </a>
-        ${assigneeLabel}${deadlineLabel}
-      </span>
+      <div style="flex:1;min-width:0">
+        <div>
+          <span class="badge badge-okr" style="font-size:9px;margin-right:4px">KR</span>
+          <a href="#" class="kr-task-link" data-action="viewTaskFromKR" data-obj-id="${kr.objective_id}"
+             style="color:var(--text);text-decoration:none;border-bottom:1px dashed var(--text-muted)">
+            ${esc(kr.title)}
+          </a>
+        </div>
+        ${(assigneeLabel || deadlineLabel) ? `<div style="padding-left:26px;margin-top:2px">${assigneeLabel}${deadlineLabel}</div>` : ''}
+      </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         <span class="badge badge-${kr.status}">${statusText(kr.status)}</span>${badge}
         ${krActions}
@@ -236,11 +238,15 @@ function renderChildObjective(obj, canManage, isAdmin, isDeptLeader) {
     const assigneeLabel = kr.assignee_name ? `<span style="font-size:10px;color:var(--text-muted)">&#128100; ${esc(kr.assignee_name)}</span>` : '';
     const deadlineExpired = kr.deadline && kr.status !== 'completed' && new Date(kr.deadline) < new Date(new Date().toDateString());
     const deadlineLabel = kr.deadline ? `<span style="font-size:10px;color:${deadlineExpired ? 'var(--danger, #e53935)' : 'var(--text-muted)'};margin-left:4px">${deadlineExpired ? '⚠️' : '📅'} ${kr.deadline}</span>` : '';
-    return `<div style="padding:4px 0;display:flex;align-items:center;gap:6px;font-size:13px">
-      <span class="badge badge-okr" style="font-size:8px">KR</span>
-      <span style="flex:1">${esc(kr.title)}</span>
-      ${assigneeLabel}${deadlineLabel}
-      ${badge}
+    return `<div style="padding:4px 0;display:flex;align-items:flex-start;gap:6px;font-size:13px">
+      <span class="badge badge-okr" style="font-size:8px;margin-top:2px">KR</span>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="flex:1">${esc(kr.title)}</span>
+          ${badge}
+        </div>
+        ${(assigneeLabel || deadlineLabel) ? `<div style="margin-top:2px">${assigneeLabel}${deadlineLabel}</div>` : ''}
+      </div>
     </div>`;
   }).join('');
 
