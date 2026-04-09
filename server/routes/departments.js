@@ -41,8 +41,9 @@ router.post('/', adminOnly, (req, res) => {
   const result = run('INSERT INTO departments (name, leader_employee_id) VALUES (?, ?)',
     [name.trim(), leader_employee_id ? Number(leader_employee_id) : null]);
 
-  // If leader set, update their user role to dept_leader
+  // If leader set, update their department_id and user role
   if (leader_employee_id) {
+    run('UPDATE employees SET department_id = ? WHERE id = ?', [result.lastInsertRowid, Number(leader_employee_id)]);
     syncLeaderRole(Number(leader_employee_id));
   }
 
@@ -74,8 +75,9 @@ router.put('/:id', adminOnly, (req, res) => {
   if (oldLeaderId && oldLeaderId !== newLeaderId) {
     demoteIfNotLeader(oldLeaderId);
   }
-  // Promote new leader
+  // Promote new leader and set their department_id
   if (newLeaderId) {
+    run('UPDATE employees SET department_id = ? WHERE id = ?', [Number(req.params.id), newLeaderId]);
     syncLeaderRole(newLeaderId);
   }
 

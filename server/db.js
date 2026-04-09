@@ -2,7 +2,7 @@ const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, 'work-tracker.db');
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'work-tracker.db');
 let db = null;
 let saveTimer = null;
 
@@ -237,6 +237,9 @@ async function initDb() {
     if (!empCols.some(c => c.name === 'department_id')) {
       db.run("ALTER TABLE employees ADD COLUMN department_id INTEGER DEFAULT NULL");
       db.run("CREATE INDEX IF NOT EXISTS idx_employees_department ON employees(department_id)");
+    }
+    if (!empCols.some(c => c.name === 'email')) {
+      db.run("ALTER TABLE employees ADD COLUMN email TEXT DEFAULT ''");
     }
     saveDbSync();
   } catch (e) { /* migration already done */ }

@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  work-tracker:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./docker-data/db:/app/server/db-data
+      - ./docker-data/uploads:/app/server/uploads
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DB_PATH=/app/server/db-data/work-tracker.db

@@ -10,7 +10,7 @@ import { loadTasks, showTaskModal, editTask, saveTask, deleteTask, applyTaskComp
 import { loadDailyLogs, showLogModal, editLog, saveLog, deleteLog, copyPreviousDay } from './dailyLogs.js';
 import { loadDeliverables, showDeliverableUploadModal, saveDeliverable, deleteDeliverable, applyDelivConfirm } from './deliverables.js';
 import { loadReviews, doReviewConfirm, showReject, doReject, doReviewDelete } from './reviews.js';
-import { loadEmployees, deleteEmployee, showEmployeeModal, saveEmployee, loadUsers, toggleUserRole, renameUser, doRenameUser, resetPassword, deleteUser, showUserModal, saveUser } from './employees.js';
+import { loadEmployees, deleteEmployee, showEmployeeModal, saveEmployee, loadUsers, toggleUserRole, renameUser, doRenameUser, resetPassword, deleteUser, showUserModal, saveUser, editUser, saveEditUser } from './employees.js';
 import { loadWeeklyGrid, gridPrevWeek, gridNextWeek, showGridDetail } from './weeklyGrid.js';
 import { loadDepartments, showDeptModal, saveDept, deleteDept, manageDeptMembers, saveDeptMembers } from './departments.js';
 
@@ -74,6 +74,8 @@ document.body.addEventListener('click', (e) => {
     case 'doRenameUser': doRenameUser(); break;
     case 'toggleUserRole': toggleUserRole(id); break;
     case 'resetPassword': resetPassword(id); break;
+    case 'editUser': editUser(id); break;
+    case 'saveEditUser': saveEditUser(); break;
     case 'deleteUser': deleteUser(id); break;
 
     // Departments

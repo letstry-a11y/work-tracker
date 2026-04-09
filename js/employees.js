@@ -16,6 +16,7 @@ export async function loadEmployees() {
     <tr>
       <td>${e.id}</td>
       <td>${esc(e.name)}</td>
+      <td>${esc(e.email) || '-'}</td>
       <td>${esc(e.department_name) || esc(e.group_name) || '-'}</td>
       <td>${e.created_at ? e.created_at.slice(0, 10) : '-'}</td>
       <td><button class="btn btn-danger btn-sm" data-action="deleteEmployee" data-id="${e.id}">删除</button></td>
@@ -35,6 +36,7 @@ export async function deleteEmployee(id) {
 
 export function showEmployeeModal() {
   document.getElementById('empName').value = '';
+  document.getElementById('empEmail').value = '';
   document.getElementById('empRole').value = '';
   document.getElementById('empGroup').value = '';
   // Populate department dropdown
@@ -57,6 +59,7 @@ export async function saveEmployee() {
     method: 'POST',
     body: {
       name,
+      email: document.getElementById('empEmail').value.trim(),
       role: document.getElementById('empRole').value,
       group_name: document.getElementById('empGroup').value,
       department_id: department_id ? Number(department_id) : null
@@ -78,24 +81,44 @@ export async function loadUsers() {
   tbody.innerHTML = state.usersCache.map(u => {
     const label = roleLabels[u.role] || u.role;
     const badge = roleBadge[u.role] || 'P2';
-    // Determine next role in cycle: employee -> dept_leader -> admin -> employee
-    let nextRole, nextLabel;
-    if (u.role === 'employee') { nextRole = 'dept_leader'; nextLabel = '升为部门负责人'; }
-    else if (u.role === 'dept_leader') { nextRole = 'admin'; nextLabel = '升为管理员'; }
-    else { nextRole = 'employee'; nextLabel = '降为员工'; }
     return `
     <tr>
       <td>${esc(u.username)}</td>
       <td>${esc(u.employee_name) || '-'}</td>
+      <td>${esc(u.email) || '-'}</td>
       <td><span class="badge badge-${badge}">${label}</span></td>
       <td>
-        <button class="btn btn-secondary btn-sm" data-action="renameUser" data-id="${u.id}">改名</button>
-        <button class="btn btn-secondary btn-sm" data-action="toggleUserRole" data-id="${u.id}">${nextLabel}</button>
+        <button class="btn btn-primary btn-sm" data-action="editUser" data-id="${u.id}">编辑</button>
         <button class="btn btn-secondary btn-sm" data-action="resetPassword" data-id="${u.id}">重置密码</button>
         <button class="btn btn-danger btn-sm" data-action="deleteUser" data-id="${u.id}">删除账号</button>
       </td>
     </tr>`;
   }).join('');
+}
+
+export function editUser(userId) {
+  const u = state.usersCache.find(x => x.id === userId);
+  if (!u) return;
+  document.getElementById('editUserId').value = userId;
+  document.getElementById('editUserName').value = u.username;
+  document.getElementById('editUserEmail').value = u.email || '';
+  document.getElementById('editUserRole').value = u.role;
+  document.getElementById('editUserModal').classList.add('show');
+}
+
+export async function saveEditUser() {
+  const userId = document.getElementById('editUserId').value;
+  const username = document.getElementById('editUserName').value.trim();
+  const email = document.getElementById('editUserEmail').value.trim();
+  const role = document.getElementById('editUserRole').value;
+  if (!username || username.length < 2) return toast('用户名至少2个字符', 'error');
+  const res = await api('/api/auth/users/' + userId, {
+    method: 'PUT', body: { username, email, role }
+  });
+  if (!res) return;
+  closeModal('editUserModal');
+  toast('用户信息已更新');
+  loadEmployees();
 }
 
 export async function toggleUserRole(userId) {
@@ -158,6 +181,7 @@ export async function deleteUser(userId) {
 export function showUserModal() {
   document.getElementById('userName').value = '';
   document.getElementById('userPass').value = '';
+  document.getElementById('userEmail').value = '';
   document.getElementById('userRole').value = 'employee';
   const sel = document.getElementById('userEmployee');
   sel.innerHTML = '<option value="">请选择员工</option>' + state.employeesCache.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
@@ -167,14 +191,14 @@ export function showUserModal() {
 export async function saveUser() {
   const username = document.getElementById('userName').value.trim();
   const password = document.getElementById('userPass').value;
+  const email = document.getElementById('userEmail').value.trim();
   const employee_id = document.getElementById('userEmployee').value ? Number(document.getElementById('userEmployee').value) : null;
   const role = document.getElementById('userRole').value;
   if (!username) return toast('用户名不能为空', 'error');
   if (!password || password.length < 6) return toast('密码至少6位', 'error');
-  if (!employee_id) return toast('请选择关联员工', 'error');
-  const res = await api('/api/auth/register', { method: 'POST', body: { username, password, employee_id, role } });
+  const res = await api('/api/auth/register', { method: 'POST', body: { username, password, email, employee_id, role } });
   if (!res) return;
   closeModal('userModal');
   toast('账号创建成功');
-  loadUsers();
+  loadEmployees();
 }

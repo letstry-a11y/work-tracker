@@ -43,7 +43,7 @@ function generateToken() {
 
 // POST /register 注册
 router.post('/register', (req, res) => {
-  const { username, password, employee_id, role } = req.body;
+  const { username, password, email, employee_id, role } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: '用户名和密码不能为空' });
   }
@@ -79,10 +79,13 @@ router.post('/register', (req, res) => {
   // 如果没指定 employee_id，就用 username 作为名字创建一个空的 employee 记录
   if (!empId) {
     const empResult = run(
-      'INSERT INTO employees (name, role, group_name) VALUES (?, ?, ?)',
-      [username.trim(), '', '']
+      'INSERT INTO employees (name, role, group_name, email) VALUES (?, ?, ?, ?)',
+      [username.trim(), '', '', email || '']
     );
     empId = empResult.lastInsertRowid;
+  } else if (email) {
+    // 关联已有员工时，更新其邮箱
+    run('UPDATE employees SET email = ? WHERE id = ?', [email, empId]);
   }
 
   const result = run(
@@ -190,7 +193,7 @@ router.get('/users', auth, (req, res) => {
     return res.status(403).json({ error: '权限不足' });
   }
   const users = all(
-    'SELECT u.id, u.username, u.role, u.employee_id, e.name as employee_name FROM users u LEFT JOIN employees e ON u.employee_id = e.id ORDER BY u.id'
+    'SELECT u.id, u.username, u.role, u.employee_id, e.name as employee_name, e.email FROM users u LEFT JOIN employees e ON u.employee_id = e.id ORDER BY u.id'
   );
   res.json({ users });
 });
@@ -274,6 +277,47 @@ router.put('/users/:id/username', auth, (req, res) => {
     return res.status(409).json({ error: '用户名已被占用' });
   }
   run('UPDATE users SET username = ? WHERE id = ?', [username.trim(), Number(req.params.id)]);
+  res.json({ ok: true });
+});
+
+// PUT /users/:id 编辑用户账号（管理员用）
+router.put('/users/:id', auth, (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: '权限不足' });
+  }
+  const { username, email, role } = req.body;
+  const userId = Number(req.params.id);
+  const user = get('SELECT * FROM users WHERE id = ?', [userId]);
+  if (!user) return res.status(404).json({ error: '用户不存在' });
+
+  // 更新用户名
+  if (username && username.trim().length >= 2) {
+    const existing = get('SELECT id FROM users WHERE username = ? AND id != ?', [username.trim(), userId]);
+    if (existing) return res.status(409).json({ error: '用户名已被占用' });
+    run('UPDATE users SET username = ? WHERE id = ?', [username.trim(), userId]);
+  }
+
+  // 更新角色
+  if (role && ['admin', 'employee', 'dept_leader'].includes(role) && role !== user.role) {
+    // 旧角色为 dept_leader → 清除部门负责人
+    if (user.role === 'dept_leader' && user.employee_id) {
+      run('UPDATE departments SET leader_employee_id = NULL WHERE leader_employee_id = ?', [user.employee_id]);
+    }
+    run('UPDATE users SET role = ? WHERE id = ?', [role, userId]);
+    // 新角色为 dept_leader → 同步部门负责人
+    if (role === 'dept_leader' && user.employee_id) {
+      const emp = get('SELECT department_id FROM employees WHERE id = ?', [user.employee_id]);
+      if (emp && emp.department_id) {
+        run('UPDATE departments SET leader_employee_id = ? WHERE id = ?', [user.employee_id, emp.department_id]);
+      }
+    }
+  }
+
+  // 更新关联员工的邮箱
+  if (email !== undefined && user.employee_id) {
+    run('UPDATE employees SET email = ? WHERE id = ?', [email || '', user.employee_id]);
+  }
+
   res.json({ ok: true });
 });
 

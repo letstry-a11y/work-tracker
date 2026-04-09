@@ -16,11 +16,11 @@ router.get('/', (req, res) => {
 
 // POST /api/employees
 router.post('/', adminOnly, (req, res) => {
-  const { name, role, group_name, department_id } = req.body;
+  const { name, role, group_name, department_id, email } = req.body;
   if (!name) return res.status(400).json({ error: '员工姓名不能为空' });
-  const result = run('INSERT INTO employees (name, role, group_name, department_id) VALUES (?, ?, ?, ?)',
-    [name, role || '', group_name || '', department_id ? Number(department_id) : null]);
-  res.json({ id: result.lastInsertRowid, name, role: role || '', group_name: group_name || '', department_id: department_id || null });
+  const result = run('INSERT INTO employees (name, role, group_name, department_id, email) VALUES (?, ?, ?, ?, ?)',
+    [name, role || '', group_name || '', department_id ? Number(department_id) : null, email || '']);
+  res.json({ id: result.lastInsertRowid, name, role: role || '', group_name: group_name || '', department_id: department_id || null, email: email || '' });
 });
 
 // DELETE /api/employees/:id

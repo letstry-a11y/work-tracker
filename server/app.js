@@ -10,9 +10,9 @@ async function start() {
 
   const app = express();
 
-  // CORS - restrict origin
+  // CORS - allow LAN access
   app.use(cors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: true,
     credentials: true
   }));
 
@@ -95,7 +95,7 @@ async function start() {
   }, 60 * 60 * 1000);
 
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`畅视OKR管理系统已启动: http://localhost:${PORT}`);
   });
 }
