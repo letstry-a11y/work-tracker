@@ -73,6 +73,24 @@ export async function saveEmployee() {
 
 // ===== USERS =====
 
+const roleLabelsDetail = { admin: '管理员', dept_leader: '部门负责人', employee: '普通员工' };
+
+export function showUserDetail(userId) {
+  const u = state.usersCache.find(x => x.id === userId);
+  if (!u) return;
+  const role = roleLabelsDetail[u.role] || u.role;
+  document.getElementById('userDetailContent').innerHTML = `
+    <table style="width:100%;border-collapse:collapse">
+      <tr><td style="padding:8px 12px;color:var(--text-muted);width:80px">用户名</td><td style="padding:8px 12px;font-weight:600">${esc(u.username)}</td></tr>
+      <tr><td style="padding:8px 12px;color:var(--text-muted)">关联员工</td><td style="padding:8px 12px">${esc(u.employee_name) || '-'}</td></tr>
+      <tr><td style="padding:8px 12px;color:var(--text-muted)">邮箱</td><td style="padding:8px 12px">${esc(u.email) || '-'}</td></tr>
+      <tr><td style="padding:8px 12px;color:var(--text-muted)">角色</td><td style="padding:8px 12px">${role}</td></tr>
+      <tr><td style="padding:8px 12px;color:var(--text-muted)">专业</td><td style="padding:8px 12px">${esc(u.specialty) || '-'}</td></tr>
+      <tr><td style="padding:8px 12px;color:var(--text-muted);vertical-align:top">描述</td><td style="padding:8px 12px;white-space:pre-wrap">${esc(u.description) || '-'}</td></tr>
+    </table>`;
+  document.getElementById('userDetailModal').classList.add('show');
+}
+
 export async function loadUsers() {
   const res = await api('/api/auth/users');
   if (!res || !res.users) return;
@@ -88,6 +106,7 @@ export async function loadUsers() {
       <td>${esc(u.email) || '-'}</td>
       <td><span class="badge badge-${badge}">${label}</span></td>
       <td>
+        <button class="btn btn-secondary btn-sm" data-action="showUserDetail" data-id="${u.id}">详细信息</button>
         <button class="btn btn-primary btn-sm" data-action="editUser" data-id="${u.id}">编辑</button>
         <button class="btn btn-secondary btn-sm" data-action="resetPassword" data-id="${u.id}">重置密码</button>
         <button class="btn btn-danger btn-sm" data-action="deleteUser" data-id="${u.id}">删除账号</button>
@@ -103,6 +122,8 @@ export function editUser(userId) {
   document.getElementById('editUserName').value = u.username;
   document.getElementById('editUserEmail').value = u.email || '';
   document.getElementById('editUserRole').value = u.role;
+  document.getElementById('editUserSpecialty').value = u.specialty || '';
+  document.getElementById('editUserDescription').value = u.description || '';
   document.getElementById('editUserModal').classList.add('show');
 }
 
@@ -112,8 +133,10 @@ export async function saveEditUser() {
   const email = document.getElementById('editUserEmail').value.trim();
   const role = document.getElementById('editUserRole').value;
   if (!username || username.length < 2) return toast('用户名至少2个字符', 'error');
+  const specialty = document.getElementById('editUserSpecialty').value.trim();
+  const description = document.getElementById('editUserDescription').value.trim();
   const res = await api('/api/auth/users/' + userId, {
-    method: 'PUT', body: { username, email, role }
+    method: 'PUT', body: { username, email, role, specialty, description }
   });
   if (!res) return;
   closeModal('editUserModal');

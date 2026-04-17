@@ -82,7 +82,20 @@ async function start() {
     res.status(500).json({ error: '服务器内部错误' });
   });
 
-  // Periodic session cleanup: every hour, remove expired sessions
+  // Auto-mark overdue tasks: tasks past deadline that are not completed
+  function markOverdueTasks() {
+    try {
+      const result = run("UPDATE tasks SET status = 'overdue' WHERE status IN ('pending', 'in_progress') AND deadline IS NOT NULL AND deadline < date('now','localtime')");
+      if (result.changes > 0) {
+        console.log(`已标记 ${result.changes} 个逾期任务`);
+      }
+    } catch (e) {
+      console.error('逾期标记失败:', e);
+    }
+  }
+  markOverdueTasks(); // Run on startup
+
+  // Periodic cleanup: every hour
   setInterval(() => {
     try {
       const result = run("DELETE FROM sessions WHERE expires_at < datetime('now')");
@@ -92,6 +105,7 @@ async function start() {
     } catch (e) {
       console.error('Session 清理失败:', e);
     }
+    markOverdueTasks();
   }, 60 * 60 * 1000);
 
   const PORT = process.env.PORT || 3000;

@@ -10,10 +10,11 @@ router.get('/', auth, (req, res) => {
   const isDeptLeader = req.user.role === 'dept_leader' && req.user.department_id;
   const deptEmpIds = isDeptLeader ? getDeptEmployeeIds(req.user.department_id) : [];
 
-  let sql = `SELECT o.*, e.name as employee_name, uc.username as created_by_name
+  let sql = `SELECT o.*, e.name as employee_name, uc.username as created_by_name, pkr.title as parent_kr_title
     FROM objectives o
     LEFT JOIN employees e ON o.employee_id = e.id
     LEFT JOIN users uc ON o.created_by = uc.id
+    LEFT JOIN tasks pkr ON o.parent_kr_id = pkr.id
     WHERE (o.parent_objective_id IS NULL OR o.scope = 'global')`;
   const params = [];
 
@@ -29,9 +30,9 @@ router.get('/', auth, (req, res) => {
     params.push(approval_status);
   }
 
-  // Employee filter
+  // Employee filter: keep global objectives (children loaded separately)
   if (employee_id) {
-    sql += ' AND o.employee_id = ?';
+    sql += " AND (o.employee_id = ? OR o.scope = 'global')";
     params.push(Number(employee_id));
   }
 
@@ -72,7 +73,7 @@ router.get('/', auth, (req, res) => {
   let childObjectives = [];
   if (globalObjIds.length > 0) {
     const gph = globalObjIds.map(() => '?').join(',');
-    childObjectives = all(`SELECT o.*, e.name as employee_name FROM objectives o LEFT JOIN employees e ON o.employee_id = e.id WHERE o.parent_objective_id IN (${gph}) ORDER BY o.id`, globalObjIds);
+    childObjectives = all(`SELECT o.*, e.name as employee_name, pkr.title as parent_kr_title FROM objectives o LEFT JOIN employees e ON o.employee_id = e.id LEFT JOIN tasks pkr ON o.parent_kr_id = pkr.id WHERE o.parent_objective_id IN (${gph}) ORDER BY o.id`, globalObjIds);
   }
 
   // All objective IDs for KR loading (main + children)
@@ -141,7 +142,7 @@ router.get('/', auth, (req, res) => {
 
 // POST /api/objectives
 router.post('/', auth, (req, res) => {
-  const { title, weight, employee_id, scope, parent_objective_id } = req.body;
+  const { title, weight, employee_id, scope, parent_objective_id, parent_kr_id } = req.body;
   if (!title) return res.status(400).json({ error: '目标名称不能为空' });
 
   const isAdmin = req.user.role === 'admin';
@@ -169,6 +170,19 @@ router.post('/', auth, (req, res) => {
     finalParentId = Number(parent_objective_id);
   }
 
+  // Validate parent_kr_id if provided: must belong to parent_objective_id
+  let finalParentKrId = null;
+  if (parent_kr_id) {
+    if (!finalParentId) {
+      return res.status(400).json({ error: '关联KR 必须与父整体OKR 一起指定' });
+    }
+    const pkr = get('SELECT objective_id FROM tasks WHERE id = ?', [Number(parent_kr_id)]);
+    if (!pkr || pkr.objective_id !== finalParentId) {
+      return res.status(400).json({ error: '关联KR 不属于所选父整体OKR' });
+    }
+    finalParentKrId = Number(parent_kr_id);
+  }
+
   // Personal objective
   let finalEmpId;
   let approvalStatus;
@@ -189,8 +203,8 @@ router.post('/', auth, (req, res) => {
   }
 
   const result = run(
-    'INSERT INTO objectives (title, weight, employee_id, scope, approval_status, created_by, parent_objective_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [title, weight || 0, finalEmpId, 'personal', approvalStatus, req.user.id, finalParentId]
+    'INSERT INTO objectives (title, weight, employee_id, scope, approval_status, created_by, parent_objective_id, parent_kr_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [title, weight || 0, finalEmpId, 'personal', approvalStatus, req.user.id, finalParentId, finalParentKrId]
   );
   res.json({ id: result.lastInsertRowid, approval_status: approvalStatus });
 });
@@ -224,7 +238,7 @@ router.put('/:id', auth, (req, res) => {
     }
   }
 
-  const { title, weight, employee_id, parent_objective_id } = req.body;
+  const { title, weight, employee_id, parent_objective_id, parent_kr_id } = req.body;
 
   // Validate parent_objective_id
   let finalParentId = obj.parent_objective_id;
@@ -242,11 +256,31 @@ router.put('/:id', auth, (req, res) => {
     }
   }
 
-  run('UPDATE objectives SET title=?, weight=?, employee_id=?, parent_objective_id=? WHERE id=?', [
+  // Validate parent_kr_id (follows parent_objective_id)
+  let finalParentKrId = obj.parent_kr_id;
+  if (parent_kr_id !== undefined) {
+    if (parent_kr_id === null || parent_kr_id === '') {
+      finalParentKrId = null;
+    } else {
+      if (!finalParentId) {
+        return res.status(400).json({ error: '关联KR 必须与父整体OKR 一起指定' });
+      }
+      const pkr = get('SELECT objective_id FROM tasks WHERE id = ?', [Number(parent_kr_id)]);
+      if (!pkr || pkr.objective_id !== finalParentId) {
+        return res.status(400).json({ error: '关联KR 不属于所选父整体OKR' });
+      }
+      finalParentKrId = Number(parent_kr_id);
+    }
+  }
+  // If parent objective was unbound, also unbind parent_kr_id
+  if (finalParentId === null) finalParentKrId = null;
+
+  run('UPDATE objectives SET title=?, weight=?, employee_id=?, parent_objective_id=?, parent_kr_id=? WHERE id=?', [
     title !== undefined ? title : obj.title,
     weight !== undefined ? weight : obj.weight,
     employee_id !== undefined ? (employee_id ? Number(employee_id) : null) : obj.employee_id,
     finalParentId,
+    finalParentKrId,
     Number(req.params.id)
   ]);
   res.json({ success: true });

@@ -5,7 +5,7 @@ const { getDeptEmployeeIds } = require('../auth/middleware');
 
 // GET /api/daily-logs
 router.get('/', (req, res) => {
-  const { employee_id, date, task_id } = req.query;
+  const { employee_id, date, task_id, start_date, end_date } = req.query;
   let sql = `SELECT dl.*, t.title as task_title, e.name as employee_name
     FROM daily_logs dl
     LEFT JOIN tasks t ON dl.task_id = t.id
@@ -34,28 +34,16 @@ router.get('/', (req, res) => {
   }
 
   if (date) { sql += ' AND dl.date = ?'; params.push(date); }
+  if (start_date) { sql += ' AND dl.date >= ?'; params.push(start_date); }
+  if (end_date) { sql += ' AND dl.date <= ?'; params.push(end_date); }
   if (task_id) { sql += ' AND dl.task_id = ?'; params.push(Number(task_id)); }
   sql += ' ORDER BY dl.id DESC';
   res.json(all(sql, params));
 });
 
-// Fix 2.5: Validate work hours (single entry 0-24h, daily total <= 24h)
-function validateHours(hours, employeeId, date, excludeLogId) {
-  if (hours < 0 || hours > 24) {
-    return '单条工时必须在 0-24 小时之间';
-  }
-  // Check daily total
-  let sql = 'SELECT COALESCE(SUM(hours), 0) as total FROM daily_logs WHERE employee_id = ? AND date = ?';
-  const params = [employeeId, date];
-  if (excludeLogId) {
-    sql += ' AND id != ?';
-    params.push(excludeLogId);
-  }
-  const result = get(sql, params);
-  const existingHours = result ? result.total : 0;
-  if (existingHours + hours > 24) {
-    return `该员工当天已填报 ${existingHours} 小时，加上本条 ${hours} 小时将超过 24 小时上限`;
-  }
+// Validate work hours (no daily cap)
+function validateHours(hours) {
+  if (hours < 0) return '工时不能为负数';
   return null;
 }
 
@@ -71,7 +59,7 @@ router.post('/', (req, res) => {
   if (!finalEmployeeId) return res.status(400).json({ error: '员工ID不能为空' });
 
   const h = parseFloat(hours) || 0;
-  const hoursError = validateHours(h, finalEmployeeId, date, null);
+  const hoursError = validateHours(h);
   if (hoursError) return res.status(400).json({ error: hoursError });
 
   const result = run(
@@ -97,7 +85,7 @@ router.put('/:id', (req, res) => {
 
   // Validate hours if changed
   if (hours !== undefined) {
-    const hoursError = validateHours(newHours, log.employee_id, log.date, log.id);
+    const hoursError = validateHours(newHours);
     if (hoursError) return res.status(400).json({ error: hoursError });
   }
 

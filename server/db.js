@@ -85,6 +85,10 @@ async function initDb() {
       db.run("ALTER TABLE objectives ADD COLUMN parent_objective_id INTEGER DEFAULT NULL");
       saveDbSync();
     }
+    if (!objCols2.some(c => c.name === 'parent_kr_id')) {
+      db.run("ALTER TABLE objectives ADD COLUMN parent_kr_id INTEGER DEFAULT NULL");
+      saveDbSync();
+    }
   } catch (e) { /* migration already done */ }
 
   db.run(`
@@ -297,6 +301,14 @@ async function initDb() {
     saveDbSync();
   } catch (e) { /* migration already done */ }
 
+  // Migration: add specialty and description to users
+  try {
+    const userCols = all("PRAGMA table_info(users)").map(c => c.name);
+    if (!userCols.includes('specialty')) db.run("ALTER TABLE users ADD COLUMN specialty TEXT DEFAULT ''");
+    if (!userCols.includes('description')) db.run("ALTER TABLE users ADD COLUMN description TEXT DEFAULT ''");
+    saveDbSync();
+  } catch (e) { /* migration already done */ }
+
   db.run(`
     CREATE TABLE IF NOT EXISTS sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -371,6 +383,7 @@ async function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_objectives_scope ON objectives(scope)',
     'CREATE INDEX IF NOT EXISTS idx_objectives_approval ON objectives(approval_status)',
     'CREATE INDEX IF NOT EXISTS idx_objectives_parent ON objectives(parent_objective_id)',
+    'CREATE INDEX IF NOT EXISTS idx_objectives_parent_kr ON objectives(parent_kr_id)',
     'CREATE INDEX IF NOT EXISTS idx_weekly_scores_employee_week ON weekly_scores(employee_id, week_start)',
     'CREATE INDEX IF NOT EXISTS idx_users_employee ON users(employee_id)',
     'CREATE INDEX IF NOT EXISTS idx_employees_department ON employees(department_id)',

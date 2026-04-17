@@ -5,12 +5,12 @@ import { api, setShowLoginPage } from './api.js';
 import { esc, closeModal, getMonday, todayStr } from './utils.js';
 import { showLoginPage, showAppPage, showRegister, showLogin, doLogin, doRegister, doLogout, showPwdModal, doChangePwd } from './auth.js';
 import { loadDashboard, loadEmpDashboard } from './dashboard.js';
-import { loadObjectives, switchObjTab, showObjModal, showGlobalObjModal, editObj, saveObj, deleteObj, addKR, editKR, saveKR, deleteKR, claimKR, approveObj, rejectObj } from './objectives.js';
+import { loadObjectives, switchObjTab, showObjModal, showGlobalObjModal, editObj, saveObj, deleteObj, addKR, editKR, saveKR, deleteKR, claimKR, approveObj, rejectObj, toggleKRDesc, populateParentKRSelect } from './objectives.js';
 import { loadTasks, showTaskModal, editTask, saveTask, deleteTask, applyTaskComplete } from './tasks.js';
-import { loadDailyLogs, showLogModal, editLog, saveLog, deleteLog, copyPreviousDay } from './dailyLogs.js';
+import { loadDailyLogs, showLogModal, editLog, saveLog, deleteLog, copyPreviousDay, switchLogView, prevLogWeek, nextLogWeek, thisLogWeek } from './dailyLogs.js';
 import { loadDeliverables, showDeliverableUploadModal, saveDeliverable, deleteDeliverable, applyDelivConfirm } from './deliverables.js';
 import { loadReviews, doReviewConfirm, showReject, doReject, doReviewDelete } from './reviews.js';
-import { loadEmployees, deleteEmployee, showEmployeeModal, saveEmployee, loadUsers, toggleUserRole, renameUser, doRenameUser, resetPassword, deleteUser, showUserModal, saveUser, editUser, saveEditUser } from './employees.js';
+import { loadEmployees, deleteEmployee, showEmployeeModal, saveEmployee, loadUsers, toggleUserRole, renameUser, doRenameUser, resetPassword, deleteUser, showUserModal, saveUser, editUser, saveEditUser, showUserDetail } from './employees.js';
 import { loadWeeklyGrid, gridPrevWeek, gridNextWeek, showGridDetail } from './weeklyGrid.js';
 import { loadDepartments, showDeptModal, saveDept, deleteDept, manageDeptMembers, saveDeptMembers } from './departments.js';
 
@@ -75,6 +75,7 @@ document.body.addEventListener('click', (e) => {
     case 'toggleUserRole': toggleUserRole(id); break;
     case 'resetPassword': resetPassword(id); break;
     case 'editUser': editUser(id); break;
+    case 'showUserDetail': showUserDetail(id); break;
     case 'saveEditUser': saveEditUser(); break;
     case 'deleteUser': deleteUser(id); break;
 
@@ -100,6 +101,7 @@ document.body.addEventListener('click', (e) => {
     case 'editKR': editKR(id); break;
     case 'saveKR': saveKR(); break;
     case 'deleteKR': deleteKR(id); break;
+    case 'toggleKRDesc': toggleKRDesc(id); break;
 
     // Tasks
     case 'showTaskModal': showTaskModal(); break;
@@ -114,6 +116,10 @@ document.body.addEventListener('click', (e) => {
     case 'editLog': editLog(id); break;
     case 'deleteLog': deleteLog(id); break;
     case 'copyPreviousDay': copyPreviousDay(); break;
+    case 'switchLogView': switchLogView(btn.dataset.logView); break;
+    case 'prevLogWeek': prevLogWeek(); break;
+    case 'nextLogWeek': nextLogWeek(); break;
+    case 'thisLogWeek': thisLogWeek(); break;
 
     // Deliverables
     case 'showDeliverableUploadModal': showDeliverableUploadModal(); break;
@@ -245,11 +251,14 @@ async function initApp() {
   const allEmpOpts = state.employeesCache.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
   const filterEmpOpts = '<option value="">全部</option>' + empOpts;
 
-  document.getElementById('logEmployee').innerHTML = empOpts;
+  document.getElementById('logEmployee').innerHTML = '<option value="">全部</option>' + empOpts;
   document.getElementById('taskAssignee').innerHTML = '<option value="">无</option>' + empOpts;
   document.getElementById('objEmployee').innerHTML = empOpts;
   document.getElementById('krAssignee').innerHTML = empOpts;
   document.getElementById('objFilterEmployee').innerHTML = filterEmpOpts;
+  if (state.currentUser.employee_id) {
+    document.getElementById('objFilterEmployee').value = state.currentUser.employee_id;
+  }
   document.getElementById('taskFilterAssignee').innerHTML = filterEmpOpts;
   document.getElementById('delivEmpFilter').innerHTML = filterEmpOpts;
   document.getElementById('reviewEmpFilter').innerHTML = filterEmpOpts;
@@ -293,7 +302,7 @@ async function initApp() {
         ? visibleEmployees.filter(e => String(e.department_id) === deptId)
         : visibleEmployees;
       const logEmpEl = document.getElementById('logEmployee');
-      logEmpEl.innerHTML = filtered.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+      logEmpEl.innerHTML = '<option value="">全部</option>' + filtered.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
       loadDailyLogs();
     });
   }
@@ -313,22 +322,38 @@ async function initApp() {
       + (state.objectivesCache || [])
         .filter(o => o.scope === 'global' && o.approval_status === 'approved')
         .map(o => `<option value="${o.id}">${esc(o.title)}</option>`).join('');
+    if (!objParentSelect.dataset.krListenerBound) {
+      objParentSelect.addEventListener('change', (e) => populateParentKRSelect(e.target.value, ''));
+      objParentSelect.dataset.krListenerBound = '1';
+    }
+  }
+
+  // Build flat list of all objectives (including children of global objectives)
+  const allObjectives = [];
+  for (const o of (state.objectivesCache || [])) {
+    allObjectives.push(o);
+    if (o.children) {
+      for (const child of o.children) {
+        allObjectives.push(child);
+      }
+    }
   }
 
   const objFilterEl = document.getElementById('taskFilterObjective');
   if (objFilterEl) {
     objFilterEl.innerHTML = '<option value="">全部</option><option value="none">无OKR</option>'
-      + (state.objectivesCache || []).map(o => {
-        const prefix = o.scope === 'global' ? '[整体] ' : '';
-        return `<option value="${o.id}">${prefix}${esc(o.title)}</option>`;
+      + allObjectives.map(o => {
+        const prefix = o.scope === 'global' ? '[整体] ' : '[个人] ';
+        const suffix = o.scope !== 'global' && o.employee_name ? ` (${esc(o.employee_name)})` : '';
+        return `<option value="${o.id}">${prefix}${esc(o.title)}${suffix}</option>`;
       }).join('');
   }
 
   const taskObjSelect = document.getElementById('taskObjective');
   if (taskObjSelect) {
     taskObjSelect.innerHTML = '<option value="">无 (独立KR)</option>'
-      + (state.objectivesCache || []).filter(o => o.approval_status === 'approved').map(o => {
-        const prefix = o.scope === 'global' ? '[整体] ' : '';
+      + allObjectives.filter(o => o.approval_status === 'approved').map(o => {
+        const prefix = o.scope === 'global' ? '[整体] ' : '[个人] ';
         const suffix = o.scope !== 'global' && o.employee_name ? ` (${esc(o.employee_name)})` : '';
         return `<option value="${o.id}">${prefix}${esc(o.title)}${suffix}</option>`;
       }).join('');
@@ -340,18 +365,21 @@ async function initApp() {
     const tObjSel = document.getElementById('taskObjective');
     if (tObjSel) {
       tObjSel.innerHTML = '<option value="">无 (独立KR)</option>'
-        + (state.objectivesCache || []).filter(o => o.approval_status === 'approved' && (o.scope === 'global' || !sel || String(o.employee_id) === sel))
+        + allObjectives.filter(o => o.approval_status === 'approved' && (o.scope === 'global' || !sel || String(o.employee_id) === sel))
           .map(o => {
-            const prefix = o.scope === 'global' ? '[整体] ' : '';
-            return `<option value="${o.id}">${prefix}${esc(o.title)}</option>`;
+            const prefix = o.scope === 'global' ? '[整体] ' : '[个人] ';
+            const suffix = o.scope !== 'global' && o.employee_name ? ` (${esc(o.employee_name)})` : '';
+            return `<option value="${o.id}">${prefix}${esc(o.title)}${suffix}</option>`;
           }).join('');
     }
   });
 
   // 员工自动选中自己
-  if (!isLeaderOrAdmin && state.currentUser.employee_id) {
+  if (state.currentUser.employee_id) {
     document.getElementById('logEmployee').value = state.currentUser.employee_id;
-    document.getElementById('logEmpFilterGroup').querySelector('label').textContent = '员工';
+    if (!isLeaderOrAdmin) {
+      document.getElementById('logEmpFilterGroup').querySelector('label').textContent = '员工';
+    }
   }
 
   // UI visibility toggles - dept_leader sees filter bars and can create tasks/objectives

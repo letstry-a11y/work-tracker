@@ -206,6 +206,10 @@
 
   <!-- ===== 每日填报 ===== -->
   <section id="tab-daily-log" class="tab-content" aria-label="每日填报">
+    <div class="obj-sub-tabs" style="margin-bottom:var(--space-md)">
+      <button class="obj-sub-tab active" data-action="switchLogView" data-log-view="day">&#128197; 日视图</button>
+      <button class="obj-sub-tab" data-action="switchLogView" data-log-view="week">&#128467; 周视图</button>
+    </div>
     <div class="filter-bar">
       <div class="form-group" id="logDeptFilterGroup">
         <label>&#127970; 部门</label>
@@ -215,24 +219,39 @@
         <label>&#128101; 选择员工</label>
         <select id="logEmployee"></select>
       </div>
-      <div class="form-group">
+      <div class="form-group" id="logDayNav">
         <label>&#128197; 日期</label>
         <input type="date" id="logDate">
       </div>
-      <button class="btn btn-secondary" data-action="copyPreviousDay">&#128203; 复制昨日</button>
+      <div class="form-group" id="logWeekNav" style="display:none">
+        <label>&#128467; 周范围</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <button class="btn btn-secondary btn-sm" data-action="prevLogWeek">&larr;</button>
+          <span id="logWeekRange" style="font-size:13px;color:var(--text);min-width:170px;text-align:center"></span>
+          <button class="btn btn-secondary btn-sm" data-action="nextLogWeek">&rarr;</button>
+          <button class="btn btn-secondary btn-sm" data-action="thisLogWeek">本周</button>
+        </div>
+      </div>
+      <button class="btn btn-secondary" data-action="copyPreviousDay" id="logCopyPrevBtn">&#128203; 复制昨日</button>
       <button class="btn btn-primary" data-action="showLogModal">&#10010; 新增记录</button>
     </div>
     <div class="card" style="margin-bottom:var(--space-md)">
-      <div class="card-title" style="margin-bottom:0"><span class="card-title-accent"></span> &#9201; 当日工时合计: <span id="todayHoursTotal" style="color:var(--primary-light);font-size:22px;font-weight:800;margin:0 4px">0</span> 小时</div>
+      <div class="card-title" style="margin-bottom:0"><span class="card-title-accent"></span>
+        <span id="logHoursLabel">&#9201; 当日工时合计:</span>
+        <span id="todayHoursTotal" style="color:var(--primary-light);font-size:22px;font-weight:800;margin:0 4px">0</span> 小时
+      </div>
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>KR</th><th>工作内容</th><th>工时</th><th>备注</th><th>操作</th></tr>
-        </thead>
-        <tbody id="logTableBody"></tbody>
-      </table>
+    <div id="logDayView">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>员工</th><th>KR</th><th>工作内容</th><th>工时</th><th>备注</th><th>操作</th></tr>
+          </thead>
+          <tbody id="logTableBody"></tbody>
+        </table>
+      </div>
     </div>
+    <div id="logWeekView" style="display:none"></div>
   </section>
 
   <!-- ===== 交付物管理 ===== -->
@@ -381,7 +400,7 @@
       <div class="form-row">
         <div class="form-group"><label>截止日</label><input type="date" id="taskDeadline"></div>
         <div class="form-group"><label>状态</label>
-          <select id="taskStatus"><option value="pending">待开始</option><option value="in_progress">进行中</option></select>
+          <select id="taskStatus"><option value="pending">待开始</option><option value="in_progress">进行中</option><option value="completed">已完成</option></select>
         </div>
       </div>
       <div class="btn-group">
@@ -418,6 +437,12 @@
             <option value="">无（独立个人OKR）</option>
           </select>
         </div>
+        <div class="form-group" id="objParentKRGroup" style="display:none">
+          <label>关联整体OKR的KR（可选）</label>
+          <select id="objParentKR">
+            <option value="">不关联具体 KR</option>
+          </select>
+        </div>
       </div>
       <div class="btn-group">
         <button class="btn btn-primary" data-action="saveObj">&#10004; 保存</button>
@@ -436,6 +461,11 @@
         <div class="form-group"><label>关键结果</label><input id="krTitle" placeholder="关键结果名称"></div>
       </div>
       <div class="form-row">
+        <div class="form-group"><label>描述（选填）</label>
+          <textarea id="krDesc" rows="3" placeholder="KR 背景、衡量口径、交付标准等"></textarea>
+        </div>
+      </div>
+      <div class="form-row">
         <div class="form-group"><label>负责人</label><select id="krAssignee"></select></div>
         <div class="form-group"><label>优先级</label>
           <select id="krPriority"><option>P0</option><option>P1</option><option selected>P2</option><option>P3</option></select>
@@ -444,6 +474,11 @@
       <div class="form-row">
         <div class="form-group"><label>预估工时 (h)</label><input type="number" id="krHours" min="0" step="0.5" value="8"></div>
         <div class="form-group"><label>截止日</label><input type="date" id="krDeadline"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>状态</label>
+          <select id="krStatus"><option value="pending">待开始</option><option value="in_progress">进行中</option><option value="completed">已完成</option></select>
+        </div>
       </div>
       <div class="btn-group">
         <button class="btn btn-primary" data-action="saveKR">&#10004; 保存</button>
@@ -482,13 +517,14 @@
       <h3 id="logModalTitle">&#128221; 新增记录</h3>
       <input type="hidden" id="logEditId">
       <div class="form-row">
+        <div class="form-group"><label>日期</label><input type="date" id="logModalDate"></div>
         <div class="form-group"><label>关联KR</label><select id="logTask"><option value="">无</option></select></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>工作内容</label><textarea id="logContent" placeholder="今日工作内容"></textarea></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>工时 (小时)</label><input type="number" id="logHours" min="0" max="24" step="0.5" value="1"></div>
+        <div class="form-group"><label>工时 (小时)</label><input type="number" id="logHours" min="0" step="0.5" value="1"></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>备注</label><input id="logRemark" placeholder="可选"></div>
@@ -570,9 +606,26 @@
           <select id="editUserRole"><option value="employee">普通员工</option><option value="dept_leader">部门负责人</option><option value="admin">管理员</option></select>
         </div>
       </div>
+      <div class="form-row">
+        <div class="form-group"><label>专业</label><input id="editUserSpecialty" placeholder="如: 机械工程、软件开发"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>描述</label><textarea id="editUserDescription" rows="3" placeholder="用户简介、职责说明等"></textarea></div>
+      </div>
       <div class="btn-group">
         <button class="btn btn-primary" data-action="saveEditUser">&#10004; 保存</button>
         <button class="btn btn-secondary" data-action="closeModal" data-modal="editUserModal">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 用户详细信息弹窗 -->
+  <div class="modal-overlay" id="userDetailModal" role="dialog" aria-modal="true" aria-label="用户详细信息">
+    <div class="modal">
+      <h3>&#128100; 用户详细信息</h3>
+      <div id="userDetailContent"></div>
+      <div class="btn-group" style="margin-top:12px">
+        <button class="btn btn-secondary" data-action="closeModal" data-modal="userDetailModal">关闭</button>
       </div>
     </div>
   </div>

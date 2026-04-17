@@ -193,7 +193,7 @@ router.get('/users', auth, (req, res) => {
     return res.status(403).json({ error: '权限不足' });
   }
   const users = all(
-    'SELECT u.id, u.username, u.role, u.employee_id, e.name as employee_name, e.email FROM users u LEFT JOIN employees e ON u.employee_id = e.id ORDER BY u.id'
+    'SELECT u.id, u.username, u.role, u.employee_id, u.specialty, u.description, e.name as employee_name, e.email FROM users u LEFT JOIN employees e ON u.employee_id = e.id ORDER BY u.id'
   );
   res.json({ users });
 });
@@ -285,7 +285,7 @@ router.put('/users/:id', auth, (req, res) => {
   if (req.user.role !== 'admin') {
     return res.status(403).json({ error: '权限不足' });
   }
-  const { username, email, role } = req.body;
+  const { username, email, role, specialty, description } = req.body;
   const userId = Number(req.params.id);
   const user = get('SELECT * FROM users WHERE id = ?', [userId]);
   if (!user) return res.status(404).json({ error: '用户不存在' });
@@ -316,6 +316,14 @@ router.put('/users/:id', auth, (req, res) => {
   // 更新关联员工的邮箱
   if (email !== undefined && user.employee_id) {
     run('UPDATE employees SET email = ? WHERE id = ?', [email || '', user.employee_id]);
+  }
+
+  // 更新专业和描述
+  if (specialty !== undefined) {
+    run('UPDATE users SET specialty = ? WHERE id = ?', [specialty || '', userId]);
+  }
+  if (description !== undefined) {
+    run('UPDATE users SET description = ? WHERE id = ?', [description || '', userId]);
   }
 
   res.json({ ok: true });

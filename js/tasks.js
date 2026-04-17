@@ -75,11 +75,7 @@ export function showTaskModal(editId) {
   document.getElementById('taskDifficulty').value = '3';
   document.getElementById('taskEstHours').value = '8';
   document.getElementById('taskDeadline').value = '';
-  // Reset to base options when creating
-  const statusEl = document.getElementById('taskStatus');
-  const completedOpt = statusEl.querySelector('option[value="completed"]');
-  if (completedOpt) completedOpt.remove();
-  statusEl.value = 'pending';
+  document.getElementById('taskStatus').value = 'pending';
   document.getElementById('taskObjective').value = '';
   document.getElementById('taskModal').classList.add('show');
 }
@@ -98,12 +94,7 @@ export function editTask(id) {
   document.getElementById('taskDifficulty').value = t.difficulty;
   document.getElementById('taskEstHours').value = t.estimated_hours;
   document.getElementById('taskDeadline').value = t.deadline || '';
-  // Admin/dept_leader gets "已完成" option
-  const statusEl = document.getElementById('taskStatus');
-  if ((state.currentUser.role === 'admin' || state.currentUser.role === 'dept_leader') && !statusEl.querySelector('option[value="completed"]')) {
-    statusEl.insertAdjacentHTML('beforeend', '<option value="completed">已完成</option>');
-  }
-  statusEl.value = t.status;
+  document.getElementById('taskStatus').value = t.status;
   document.getElementById('taskObjective').value = t.objective_id || '';
   document.getElementById('taskModal').classList.add('show');
 }

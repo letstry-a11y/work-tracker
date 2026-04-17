@@ -2,10 +2,11 @@
 
 import { state } from './state.js';
 import { api } from './api.js';
-import { toast, closeModal, esc, statusText, confirmDialog } from './utils.js';
+import { toast, closeModal, esc, statusText, confirmDialog, getMonday, getSunday } from './utils.js';
 
 export async function loadObjectives() {
   const empId = document.getElementById('objFilterEmployee') && document.getElementById('objFilterEmployee').value;
+  const deptId = document.getElementById('objFilterDept') && document.getElementById('objFilterDept').value;
   const scopeFilter = document.getElementById('objFilterScope') && document.getElementById('objFilterScope').value;
   const approvalFilter = document.getElementById('objFilterApproval') && document.getElementById('objFilterApproval').value;
   const isAdmin = state.currentUser.role === 'admin';
@@ -17,29 +18,70 @@ export async function loadObjectives() {
   if (scopeFilter) url += 'scope=' + scopeFilter + '&';
   if (approvalFilter) url += 'approval_status=' + approvalFilter + '&';
 
-  const data = await api(url);
+  const monday = getMonday();
+  const sunday = getSunday();
+  const [data, weekLogs] = await Promise.all([
+    api(url),
+    api(`/api/daily-logs?start_date=${monday}&end_date=${sunday}`)
+  ]);
   if (!data) return;
   state.objectivesCache = data;
+
+  const logsByKR = {};
+  for (const l of (weekLogs || [])) {
+    if (!l.task_id) continue;
+    (logsByKR[l.task_id] = logsByKR[l.task_id] || []).push(l);
+  }
+  for (const list of Object.values(logsByKR)) {
+    list.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id - b.id));
+  }
 
   const globalContainer = document.getElementById('objGlobalList');
   const personalContainer = document.getElementById('objPersonalList');
 
   // Split into global and personal
   const globalObjs = state.objectivesCache.filter(o => o.scope === 'global');
+  const isEmployee = !isAdmin && !isDeptLeader;
+  const myEmpId = state.currentUser.employee_id;
+  // 筛选目标员工ID：如果选了员工筛选就用筛选值，否则普通员工用自己的ID
+  const filterEmpId = empId ? Number(empId) : (isEmployee ? myEmpId : null);
+  // 部门筛选：解析该部门的员工ID集合
+  const deptEmpIdSet = deptId
+    ? new Set((state.employeesCache || []).filter(e => String(e.department_id) === String(deptId)).map(e => e.id))
+    : null;
+  const passesPeople = (eid) => {
+    if (filterEmpId && eid !== filterEmpId) return false;
+    if (deptEmpIdSet && !deptEmpIdSet.has(eid)) return false;
+    return true;
+  };
+
   // Collect all personal objectives: independent ones + children of global objectives
-  const personalObjs = state.objectivesCache.filter(o => o.scope !== 'global' && !o.parent_objective_id);
+  const personalObjs = state.objectivesCache
+    .filter(o => o.scope !== 'global' && !o.parent_objective_id)
+    .filter(o => passesPeople(o.employee_id));
   for (const g of globalObjs) {
     if (g.children) {
       for (const child of g.children) {
-        if (child.scope === 'personal') personalObjs.push(child);
+        if (child.scope === 'personal' && passesPeople(child.employee_id)) {
+          personalObjs.push(child);
+        }
       }
     }
   }
 
   // === Render global objectives ===
-  if (globalObjs.length > 0) {
+  // 选了员工/部门时，只显示与其相关的整体OKR
+  let visibleGlobalObjs = globalObjs;
+  if (filterEmpId || deptEmpIdSet) {
+    visibleGlobalObjs = globalObjs.filter(obj => {
+      const hasRelatedKR = (obj.key_results || []).some(kr => kr.assignee_id && passesPeople(kr.assignee_id));
+      const hasRelatedChild = (obj.children || []).some(c => passesPeople(c.employee_id));
+      return hasRelatedKR || hasRelatedChild;
+    });
+  }
+  if (visibleGlobalObjs.length > 0) {
     let gHtml = '';
-    for (const obj of globalObjs) {
+    for (const obj of visibleGlobalObjs) {
       gHtml += `<div class="card" style="margin-top:12px;border-left:4px solid var(--primary-light)">`;
       gHtml += renderObjective(obj, canManage, isAdmin, isDeptLeader);
       // Progress bar
@@ -52,12 +94,15 @@ export async function loadObjectives() {
           <div style="width:${progress}%;height:100%;background:var(--primary-light);border-radius:6px;transition:width .3s"></div>
         </div>
       </div>`;
-      // Children tree
-      if (obj.children && obj.children.length > 0) {
+      // Children tree: filter by selected employee / department / own employee
+      const visibleChildren = (filterEmpId || deptEmpIdSet)
+        ? (obj.children || []).filter(c => passesPeople(c.employee_id))
+        : (obj.children || []);
+      if (visibleChildren.length > 0) {
         gHtml += `<div style="margin:8px 0 12px 28px;border-left:2px solid var(--border);padding-left:12px">
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">&#128279; 子OKR (${obj.children.length})</div>`;
-        for (const child of obj.children) {
-          gHtml += renderChildObjective(child, canManage, isAdmin, isDeptLeader);
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">&#128279; 子OKR (${visibleChildren.length})</div>`;
+        for (const child of visibleChildren) {
+          gHtml += renderChildObjective(child, canManage, isAdmin, isDeptLeader, logsByKR);
         }
         gHtml += '</div>';
       }
@@ -85,7 +130,7 @@ export async function loadObjectives() {
       pHtml += `<div class="card" style="margin-top:12px">
         <div class="card-title" style="margin-bottom:12px"><span class="card-title-accent"></span> &#128101; ${esc(empData.name)} 的OKR</div>`;
       for (const obj of empData.objectives) {
-        pHtml += renderObjective(obj, canManage, isAdmin, isDeptLeader);
+        pHtml += renderObjective(obj, canManage, isAdmin, isDeptLeader, logsByKR);
       }
       pHtml += '</div>';
     }
@@ -117,9 +162,48 @@ export function switchObjTab(tab) {
   personalPane.style.display = tab === 'personal' ? '' : 'none';
 }
 
-function renderObjective(obj, canManage, isAdmin, isDeptLeader) {
+function renderKRDescTrigger(kr) {
+  if (!kr.description) return '';
+  return `<button class="btn btn-secondary btn-sm" data-action="toggleKRDesc" data-id="${kr.id}"
+    style="padding:2px 8px;font-size:11px;margin-left:6px;vertical-align:middle">📄 描述</button>`;
+}
+
+function renderKRDescPanel(kr) {
+  if (!kr.description) return '';
+  return `<div id="kr-desc-${kr.id}" style="display:none;margin:4px 0 8px 28px;padding:8px 12px;font-size:12px;white-space:pre-wrap;color:var(--text);background:var(--card-bg);border-left:3px solid var(--primary-light);border-radius:4px">${esc(kr.description)}</div>`;
+}
+
+export function toggleKRDesc(id) {
+  const panel = document.getElementById(`kr-desc-${id}`);
+  if (!panel) return;
+  panel.style.display = panel.style.display === 'none' ? '' : 'none';
+}
+
+function renderKRWeekLogs(logs) {
+  if (!logs || logs.length === 0) {
+    return `<div style="padding:0 0 8px 28px;font-size:12px;color:var(--text-muted)">📋 本周暂无进展</div>`;
+  }
+  const totalHours = logs.reduce((s, l) => s + (Number(l.hours) || 0), 0);
+  const hoursStr = Number.isInteger(totalHours) ? totalHours : totalHours.toFixed(1);
+  const items = logs.map(l => `
+    <div style="padding:4px 0;border-top:1px dashed var(--border);font-size:12px">
+      <span style="color:var(--text-muted)">${esc(l.date)}</span>
+      <span style="margin-left:6px">${esc(l.employee_name || '')}</span>
+      <span class="badge badge-in_progress" style="font-size:10px;margin-left:6px">${esc(String(l.hours || 0))}h</span>
+      <div style="margin-top:2px;color:var(--text);white-space:pre-wrap">${esc(l.work_content || '—')}</div>
+    </div>`).join('');
+  return `<details style="margin:0 0 8px 28px">
+    <summary style="cursor:pointer;font-size:12px;color:var(--text-muted);padding:2px 0">
+      📋 本周进展（${logs.length}条，合计 ${hoursStr}h）
+    </summary>
+    <div style="padding:4px 0 2px 0">${items}</div>
+  </details>`;
+}
+
+function renderObjective(obj, canManage, isAdmin, isDeptLeader, logsByKR) {
   const krs = obj.key_results || [];
   const isGlobal = obj.scope === 'global';
+  const showWeekLogs = obj.scope === 'personal' && logsByKR;
   const isPending = obj.approval_status === 'pending';
   const isRejected = obj.approval_status === 'rejected';
   const isOwnObj = obj.employee_id === state.currentUser.employee_id;
@@ -170,26 +254,33 @@ function renderObjective(obj, canManage, isAdmin, isDeptLeader) {
     const badge = kr.confirm_status === 'pending' ? '<span class="badge badge-P1" style="font-size:10px;margin-left:4px">待审核</span>' :
                   kr.confirm_status === 'confirmed' ? '<span class="badge badge-completed" style="font-size:10px;margin-left:4px">已通过</span>' :
                   kr.confirm_status === 'rejected' ? '<span class="badge badge-overdue" style="font-size:10px;margin-left:4px">已打回</span>' : '';
-    const assigneeLabel = isGlobal && kr.assignee_name ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px">&#128100; ${esc(kr.assignee_name)}</span>` : '';
+    const assigneeLabel = kr.assignee_name ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px">&#128100; ${esc(kr.assignee_name)}</span>` : '';
     const deadlineExpired = kr.deadline && kr.status !== 'completed' && new Date(kr.deadline) < new Date(new Date().toDateString());
     const deadlineLabel = kr.deadline ? `<span style="font-size:11px;color:${deadlineExpired ? 'var(--danger, #e53935)' : 'var(--text-muted)'};margin-left:6px">${deadlineExpired ? '⚠️' : '📅'} ${kr.deadline}</span>` : '';
     const krActions = canManage ? `<button class="btn btn-secondary btn-sm" data-action="editKR" data-id="${kr.id}">编辑</button>
             <button class="btn btn-danger btn-sm" data-action="deleteKR" data-id="${kr.id}">删除</button>` : '';
-    return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
-      <div style="flex:1;min-width:0">
-        <div>
-          <span class="badge badge-okr" style="font-size:9px;margin-right:4px">KR</span>
+    const weekBlock = showWeekLogs ? renderKRWeekLogs(logsByKR[kr.id] || []) : '';
+    const descTrigger = renderKRDescTrigger(kr);
+    const descPanel = renderKRDescPanel(kr);
+    return `<div style="border-bottom:1px solid var(--border)">
+      <div style="padding:8px 0;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:0;display:flex;align-items:center;flex-wrap:wrap;gap:4px">
+          <span class="badge badge-okr" style="font-size:9px">KR</span>
           <a href="#" class="kr-task-link" data-action="viewTaskFromKR" data-obj-id="${kr.objective_id}"
              style="color:var(--text);text-decoration:none;border-bottom:1px dashed var(--text-muted)">
             ${esc(kr.title)}
           </a>
+          ${descTrigger}
+          ${assigneeLabel}
+          ${deadlineLabel}
         </div>
-        ${(assigneeLabel || deadlineLabel) ? `<div style="padding-left:26px;margin-top:2px">${assigneeLabel}${deadlineLabel}</div>` : ''}
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+          <span class="badge badge-${kr.status}">${statusText(kr.status)}</span>${badge}
+          ${krActions}
+        </div>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-        <span class="badge badge-${kr.status}">${statusText(kr.status)}</span>${badge}
-        ${krActions}
-      </div>
+      ${descPanel}
+      ${weekBlock}
     </div>`;
   }).join('');
 
@@ -207,8 +298,9 @@ function renderObjective(obj, canManage, isAdmin, isDeptLeader) {
   </div>`;
 }
 
-function renderChildObjective(obj, canManage, isAdmin, isDeptLeader) {
+function renderChildObjective(obj, canManage, isAdmin, isDeptLeader, logsByKR) {
   const krs = obj.key_results || [];
+  const showWeekLogs = !!logsByKR;
   const allCompleted = krs.length > 0 && krs.every(k => k.status === 'completed');
   const statusIcon = allCompleted ? '&#10004;' : '&#9675;';
   const statusColor = allCompleted ? 'var(--success, #4caf50)' : 'var(--text-muted)';
@@ -238,22 +330,34 @@ function renderChildObjective(obj, canManage, isAdmin, isDeptLeader) {
     const assigneeLabel = kr.assignee_name ? `<span style="font-size:10px;color:var(--text-muted)">&#128100; ${esc(kr.assignee_name)}</span>` : '';
     const deadlineExpired = kr.deadline && kr.status !== 'completed' && new Date(kr.deadline) < new Date(new Date().toDateString());
     const deadlineLabel = kr.deadline ? `<span style="font-size:10px;color:${deadlineExpired ? 'var(--danger, #e53935)' : 'var(--text-muted)'};margin-left:4px">${deadlineExpired ? '⚠️' : '📅'} ${kr.deadline}</span>` : '';
-    return `<div style="padding:4px 0;display:flex;align-items:flex-start;gap:6px;font-size:13px">
-      <span class="badge badge-okr" style="font-size:8px;margin-top:2px">KR</span>
-      <div style="flex:1;min-width:0">
-        <div style="display:flex;align-items:center;gap:6px">
-          <span style="flex:1">${esc(kr.title)}</span>
-          ${badge}
+    const weekBlock = showWeekLogs ? renderKRWeekLogs(logsByKR[kr.id] || []) : '';
+    const descTrigger = renderKRDescTrigger(kr);
+    const descPanel = renderKRDescPanel(kr);
+    return `<div style="padding:4px 0;font-size:13px">
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <div style="flex:1;min-width:0;display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+          <span class="badge badge-okr" style="font-size:8px">KR</span>
+          <span>${esc(kr.title)}</span>
+          ${descTrigger}
+          ${assigneeLabel}
+          ${deadlineLabel}
         </div>
-        ${(assigneeLabel || deadlineLabel) ? `<div style="margin-top:2px">${assigneeLabel}${deadlineLabel}</div>` : ''}
+        ${badge}
       </div>
+      ${descPanel}
+      ${weekBlock}
     </div>`;
   }).join('');
+
+  const parentKRBadge = obj.parent_kr_title
+    ? `<span class="badge" style="background:rgba(33,150,243,0.15);color:var(--primary-light);font-size:10px" title="${esc(obj.parent_kr_title)}">&#128279; 关联KR: ${esc(obj.parent_kr_title)}</span>`
+    : '';
 
   return `<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:6px">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <span style="color:${statusColor};font-size:14px">${statusIcon}</span>
       <span style="flex:1;font-weight:600;font-size:13px">${esc(obj.title)}</span>
+      ${parentKRBadge}
       ${obj.employee_name ? `<span style="font-size:11px;color:var(--text-muted)">&#128100; ${esc(obj.employee_name)}</span>` : ''}
       <span class="badge badge-in_progress" style="font-size:10px">权重 ${Math.round((obj.weight || 0) * 100)}%</span>
       ${approvalBadge}
@@ -261,6 +365,24 @@ function renderChildObjective(obj, canManage, isAdmin, isDeptLeader) {
     </div>
     ${krHtml || '<div style="color:var(--text-muted);font-size:12px;padding-left:22px;margin-top:4px">暂无 KR</div>'}
   </div>`;
+}
+
+export function populateParentKRSelect(parentObjId, selectedKrId) {
+  const krGroup = document.getElementById('objParentKRGroup');
+  const krSelect = document.getElementById('objParentKR');
+  if (!krGroup || !krSelect) return;
+  if (!parentObjId) {
+    krSelect.innerHTML = '<option value="">不关联具体 KR</option>';
+    krSelect.value = '';
+    krGroup.style.display = 'none';
+    return;
+  }
+  const parent = (state.objectivesCache || []).find(o => o.id === Number(parentObjId));
+  const krs = (parent && parent.key_results) || [];
+  krSelect.innerHTML = '<option value="">不关联具体 KR</option>'
+    + krs.map(k => `<option value="${k.id}">${esc(k.title)}</option>`).join('');
+  krSelect.value = selectedKrId ? String(selectedKrId) : '';
+  krGroup.style.display = krs.length > 0 ? '' : 'none';
 }
 
 export function showObjModal(editId) {
@@ -286,6 +408,7 @@ export function showObjModal(editId) {
     parentGroup.style.display = '';
     document.getElementById('objParentObjective').value = '';
   }
+  populateParentKRSelect('', '');
 
   if (editId) {
     // Find in main cache or in children of global objectives
@@ -315,6 +438,7 @@ export function showObjModal(editId) {
       // Set parent objective value
       if (obj.parent_objective_id && parentGroup) {
         document.getElementById('objParentObjective').value = obj.parent_objective_id;
+        populateParentKRSelect(obj.parent_objective_id, obj.parent_kr_id);
       }
     }
   }
@@ -332,6 +456,8 @@ export function showGlobalObjModal() {
   document.getElementById('objApprovalNote').style.display = 'none';
   const parentGroup = document.getElementById('objParentGroup');
   if (parentGroup) parentGroup.style.display = 'none';
+  const parentKRGroup = document.getElementById('objParentKRGroup');
+  if (parentKRGroup) parentKRGroup.style.display = 'none';
   document.getElementById('objModalTitle').textContent = '创建整体OKR';
   document.getElementById('objModal').classList.add('show');
 }
@@ -351,6 +477,9 @@ export async function saveObj() {
     body.employee_id = document.getElementById('objEmployee').value ? parseInt(document.getElementById('objEmployee').value) : null;
     const parentVal = document.getElementById('objParentObjective').value;
     body.parent_objective_id = parentVal ? parseInt(parentVal) : null;
+    const krSel = document.getElementById('objParentKR');
+    const parentKrVal = krSel ? krSel.value : '';
+    body.parent_kr_id = parentKrVal ? parseInt(parentKrVal) : null;
   }
 
   if (!body.title) return toast('OKR名称不能为空', 'error');
@@ -416,9 +545,11 @@ export function claimKR(objId) {
   document.getElementById('krEditId').value = '';
   document.getElementById('krObjId').value = objId;
   document.getElementById('krTitle').value = '';
+  document.getElementById('krDesc').value = '';
   document.getElementById('krPriority').value = 'P2';
   document.getElementById('krHours').value = '8';
   document.getElementById('krDeadline').value = '';
+  document.getElementById('krStatus').value = 'pending';
   document.getElementById('krModalTitle').textContent = '认领关键结果';
   // Pre-select self as assignee
   const krAssignee = document.getElementById('krAssignee');
@@ -432,9 +563,13 @@ export function addKR(objId) {
   document.getElementById('krEditId').value = '';
   document.getElementById('krObjId').value = objId;
   document.getElementById('krTitle').value = '';
+  document.getElementById('krDesc').value = '';
   document.getElementById('krPriority').value = 'P2';
   document.getElementById('krHours').value = '8';
   document.getElementById('krDeadline').value = '';
+  const krAssignee = document.getElementById('krAssignee');
+  if (krAssignee) krAssignee.value = '';
+  document.getElementById('krStatus').value = 'pending';
   document.getElementById('krModalTitle').textContent = '添加关键结果';
   document.getElementById('krModal').classList.add('show');
 }
@@ -457,9 +592,13 @@ export function editKR(id) {
   document.getElementById('krEditId').value = id;
   document.getElementById('krObjId').value = kr.objective_id;
   document.getElementById('krTitle').value = kr.title;
+  document.getElementById('krDesc').value = kr.description || '';
   document.getElementById('krPriority').value = kr.priority;
   document.getElementById('krHours').value = kr.estimated_hours || 8;
   document.getElementById('krDeadline').value = kr.deadline || '';
+  const krAssignee = document.getElementById('krAssignee');
+  if (krAssignee) krAssignee.value = kr.assignee_id || '';
+  document.getElementById('krStatus').value = kr.status || 'pending';
   document.getElementById('krModalTitle').textContent = '编辑关键结果';
   document.getElementById('krModal').classList.add('show');
 }
@@ -469,11 +608,13 @@ export async function saveKR() {
   const objective_id = parseInt(document.getElementById('krObjId').value);
   const body = {
     title: document.getElementById('krTitle').value.trim(),
+    description: document.getElementById('krDesc').value,
     objective_id,
     assignee_id: document.getElementById('krAssignee').value ? parseInt(document.getElementById('krAssignee').value) : null,
     priority: document.getElementById('krPriority').value,
     estimated_hours: parseFloat(document.getElementById('krHours').value) || 8,
-    deadline: document.getElementById('krDeadline').value || null
+    deadline: document.getElementById('krDeadline').value || null,
+    status: document.getElementById('krStatus').value
   };
   if (!body.title) return toast('KR名称不能为空', 'error');
   if (editId) {
