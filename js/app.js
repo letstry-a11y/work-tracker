@@ -13,6 +13,7 @@ import { loadReviews, doReviewConfirm, showReject, doReject, doReviewDelete } fr
 import { loadEmployees, deleteEmployee, showEmployeeModal, saveEmployee, loadUsers, toggleUserRole, renameUser, doRenameUser, resetPassword, deleteUser, showUserModal, saveUser, editUser, saveEditUser, showUserDetail } from './employees.js';
 import { loadWeeklyGrid, gridPrevWeek, gridNextWeek, showGridDetail } from './weeklyGrid.js';
 import { loadDepartments, showDeptModal, saveDept, deleteDept, manageDeptMembers, saveDeptMembers } from './departments.js';
+import { loadProjects, showProjectModal, editCurrentProject, saveProject, deleteCurrentProject, showProjectTaskModal, editProjectTask, saveProjectTask, deleteProjectTask, selectProjectTaskRow, indentProjectTask, outdentProjectTask, moveProjectTaskUp, moveProjectTaskDown, switchProjectView, ganttZoom, addProjectTaskDep, removeProjectTaskDep, importProjectXmlTrigger, exportProjectXml, toggleCriticalPath, saveBaseline, deleteSelectedBaseline, toggleResourceHistogram, importProjectMppTrigger } from './projects.js';
 
 // Set up the login page reference for API module
 setShowLoginPage(showLoginPage);
@@ -32,6 +33,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     const loaders = {
       dashboard: () => (isAdmin || isDeptLeader) ? loadDashboard() : loadEmpDashboard(),
       objectives: loadObjectives,
+      projects: loadProjects,
       tasks: loadTasks,
       'daily-log': loadDailyLogs,
       deliverables: loadDeliverables,
@@ -45,6 +47,18 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 // ===== Event Delegation (Phase 4.2) =====
 // Replaces all inline onclick handlers with centralized event delegation
+
+// Close any open toolbar dropdown menu when clicking outside its items, or after an item click
+document.body.addEventListener('click', (e) => {
+  document.querySelectorAll('details.toolbar-menu[open]').forEach(d => {
+    if (!d.contains(e.target)) d.removeAttribute('open');
+  });
+  const itemBtn = e.target.closest('.toolbar-menu-items [data-action]');
+  if (itemBtn) {
+    const menu = itemBtn.closest('details.toolbar-menu');
+    if (menu) setTimeout(() => menu.removeAttribute('open'), 0);
+  }
+});
 
 document.body.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-action]');
@@ -120,6 +134,32 @@ document.body.addEventListener('click', (e) => {
     case 'prevLogWeek': prevLogWeek(); break;
     case 'nextLogWeek': nextLogWeek(); break;
     case 'thisLogWeek': thisLogWeek(); break;
+
+    // Projects
+    case 'showProjectModal': showProjectModal(); break;
+    case 'editCurrentProject': editCurrentProject(); break;
+    case 'saveProject': saveProject(); break;
+    case 'deleteCurrentProject': deleteCurrentProject(); break;
+    case 'showProjectTaskModal': showProjectTaskModal(); break;
+    case 'editProjectTask': editProjectTask(id); break;
+    case 'saveProjectTask': saveProjectTask(); break;
+    case 'deleteProjectTask': deleteProjectTask(id); break;
+    case 'selectProjectTaskRow': selectProjectTaskRow(id); break;
+    case 'indentProjectTask': indentProjectTask(); break;
+    case 'outdentProjectTask': outdentProjectTask(); break;
+    case 'moveProjectTaskUp': moveProjectTaskUp(); break;
+    case 'moveProjectTaskDown': moveProjectTaskDown(); break;
+    case 'switchProjectView': switchProjectView(btn.dataset.projectView); break;
+    case 'ganttZoom': ganttZoom(btn.dataset.zoom); break;
+    case 'addProjectTaskDep': addProjectTaskDep(); break;
+    case 'removeProjectTaskDep': removeProjectTaskDep(Number(btn.dataset.idx)); break;
+    case 'importProjectXmlTrigger': importProjectXmlTrigger(); break;
+    case 'exportProjectXml': exportProjectXml(); break;
+    case 'toggleCriticalPath': toggleCriticalPath(); break;
+    case 'saveBaseline': saveBaseline(); break;
+    case 'deleteSelectedBaseline': deleteSelectedBaseline(); break;
+    case 'toggleResourceHistogram': toggleResourceHistogram(); break;
+    case 'importProjectMppTrigger': importProjectMppTrigger(); break;
 
     // Deliverables
     case 'showDeliverableUploadModal': showDeliverableUploadModal(); break;

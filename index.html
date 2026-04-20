@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>畅视OKR管理系统</title>
   <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/frappe-gantt.css">
 </head>
 <body>
 
@@ -54,6 +55,7 @@
   <nav class="tab-nav" id="tabNav" role="navigation" aria-label="主导航">
     <button class="tab-btn active" data-tab="dashboard"><span class="tab-icon">&#128200;</span> 仪表盘</button>
     <button class="tab-btn" data-tab="objectives"><span class="tab-icon">&#127919;</span> OKR管理</button>
+    <button class="tab-btn" data-tab="projects"><span class="tab-icon">&#128203;</span> 项目管理</button>
     <button class="tab-btn" data-tab="tasks"><span class="tab-icon">&#9745;</span> KR管理</button>
     <button class="tab-btn" data-tab="daily-log"><span class="tab-icon">&#128221;</span> 每日填报</button>
     <button class="tab-btn" data-tab="deliverables"><span class="tab-icon">&#128230;</span> 交付物管理</button>
@@ -151,6 +153,88 @@
         <button class="btn btn-primary" id="btnCreateObj" data-action="showObjModal">&#10010; 个人OKR</button>
       </div>
       <div id="objPersonalList"></div>
+    </div>
+  </section>
+
+  <!-- ===== 项目管理 ===== -->
+  <section id="tab-projects" class="tab-content" aria-label="项目管理">
+    <input type="file" id="projectXmlFileInput" accept=".xml,.mspdi" style="display:none">
+    <input type="file" id="projectMppFileInput" accept=".mpp" style="display:none">
+    <div class="filter-bar">
+      <div class="form-group">
+        <label>&#128203; 项目</label>
+        <select id="projectSelect"><option value="">（未选择）</option></select>
+      </div>
+      <button class="btn btn-primary" id="projectNewBtn" data-action="showProjectModal">&#10010; 新建</button>
+      <button class="btn btn-secondary" id="projectEditBtn" data-action="editCurrentProject">&#9998; 编辑</button>
+      <button class="btn btn-danger" id="projectDeleteBtn" data-action="deleteCurrentProject">&#10006; 删除</button>
+      <span class="toolbar-sep"></span>
+      <details class="toolbar-menu">
+        <summary class="btn btn-secondary">&#128229; 导入 &#9662;</summary>
+        <div class="toolbar-menu-items">
+          <button class="btn btn-secondary btn-sm" data-action="importProjectXmlTrigger">从 Project XML (.xml)</button>
+          <button class="btn btn-secondary btn-sm" data-action="importProjectMppTrigger">从 Project 文件 (.mpp)</button>
+        </div>
+      </details>
+      <button class="btn btn-secondary" id="projectExportBtn" data-action="exportProjectXml">&#128228; 导出 XML</button>
+    </div>
+    <div class="filter-bar" style="gap:8px;align-items:center">
+      <div class="obj-sub-tabs" style="margin-bottom:0">
+        <button class="obj-sub-tab active" data-action="switchProjectView" data-project-view="table">&#128203; 表格</button>
+        <button class="obj-sub-tab" data-action="switchProjectView" data-project-view="gantt">&#128202; 甘特图</button>
+      </div>
+      <span class="toolbar-sep"></span>
+      <label class="toolbar-inline">
+        <input type="checkbox" id="projectCPToggle" data-action="toggleCriticalPath"> 关键路径
+      </label>
+      <span class="toolbar-inline" style="gap:4px">
+        <span style="color:var(--text-muted);font-size:12px">基线:</span>
+        <select id="projectBaselineSelect" style="max-width:170px"><option value="">（无）</option></select>
+        <button class="btn btn-secondary btn-sm" data-action="saveBaseline" title="保存基线">&#128204;</button>
+        <button class="btn btn-secondary btn-sm" data-action="deleteSelectedBaseline" title="删除所选基线">&#10006;</button>
+      </span>
+      <button class="btn btn-secondary btn-sm" data-action="toggleResourceHistogram">&#128202; 直方图</button>
+    </div>
+    <div id="projectTableView">
+      <div class="filter-bar" id="projectTaskToolbar" style="display:none">
+        <button class="btn btn-primary" data-action="showProjectTaskModal">&#10010; 新建任务</button>
+        <button class="btn btn-secondary" data-action="indentProjectTask">&rarr;| 缩进</button>
+        <button class="btn btn-secondary" data-action="outdentProjectTask">|&larr; 取消缩进</button>
+        <button class="btn btn-secondary" data-action="moveProjectTaskUp">&uarr; 上移</button>
+        <button class="btn btn-secondary" data-action="moveProjectTaskDown">&darr; 下移</button>
+      </div>
+      <div class="table-wrap" id="projectTaskTableWrap">
+        <table id="projectTaskTable">
+          <thead>
+            <tr>
+              <th style="width:52px">序号</th>
+              <th>任务名称</th>
+              <th style="width:90px">工期</th>
+              <th style="width:120px">开始时间</th>
+              <th style="width:120px">完成时间</th>
+              <th style="width:120px">前置任务</th>
+              <th>资源名称</th>
+              <th style="width:130px">操作</th>
+            </tr>
+          </thead>
+          <tbody id="projectTaskTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="projectHistogramPanel" style="display:none;margin-bottom:var(--space-md)"></div>
+    <div id="projectGanttView" style="display:none">
+      <div class="filter-bar" style="margin-bottom:8px">
+        <button class="btn btn-secondary btn-sm" data-action="ganttZoom" data-zoom="Day">日</button>
+        <button class="btn btn-secondary btn-sm" data-action="ganttZoom" data-zoom="Week">周</button>
+        <button class="btn btn-secondary btn-sm" data-action="ganttZoom" data-zoom="Month">月</button>
+        <button class="btn btn-secondary btn-sm" data-action="ganttZoom" data-zoom="Year">年</button>
+      </div>
+      <div id="projectGanttContainer" style="overflow:auto;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+        <svg id="projectGanttSvg"></svg>
+      </div>
+      <div id="projectGanttEmpty" style="display:none;padding:40px;text-align:center;color:var(--text-muted);font-size:13px">
+        甘特图：没有同时具备"开始时间"和"完成时间"的任务。请先在表格中补全日期。
+      </div>
     </div>
   </section>
 
@@ -536,6 +620,71 @@
     </div>
   </div>
 
+  <!-- 项目弹窗 -->
+  <div class="modal-overlay" id="projectModal" role="dialog" aria-modal="true" aria-label="项目编辑">
+    <div class="modal">
+      <h3 id="projectModalTitle">&#128203; 新建项目</h3>
+      <input type="hidden" id="projectEditId">
+      <div class="form-row">
+        <div class="form-group"><label>项目名称 *</label><input id="projectName" placeholder="项目名称"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>起始日期</label><input type="date" id="projectStartDate"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>描述</label><textarea id="projectDescription" rows="2" placeholder="可选"></textarea></div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" data-action="saveProject">&#10004; 保存</button>
+        <button class="btn btn-secondary" data-action="closeModal" data-modal="projectModal">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 项目任务弹窗 -->
+  <div class="modal-overlay" id="projectTaskModal" role="dialog" aria-modal="true" aria-label="项目任务编辑">
+    <div class="modal">
+      <h3 id="projectTaskModalTitle">&#10010; 新建任务</h3>
+      <input type="hidden" id="projectTaskEditId">
+      <div class="form-row">
+        <div class="form-group"><label>任务名称 *</label>
+          <input id="projectTaskTitle" list="projectTaskTitleList" placeholder="可直接输入，或从 OKR/KR 下拉选择（🎯/🔑）" autocomplete="off">
+          <datalist id="projectTaskTitleList"></datalist>
+          <span style="font-size:11px;color:var(--text-muted)">选择列表项将自动关联对应 OKR/KR；自由输入则不关联</span>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>父任务</label><select id="projectTaskParent"><option value="">（无）</option></select></div>
+        <div class="form-group"><label>工期（工作日）</label>
+          <input type="number" id="projectTaskDuration" min="0" step="0.5" value="1">
+          <label style="font-size:12px;font-weight:400;margin-top:4px;color:var(--text-muted)">
+            <input type="checkbox" id="projectTaskEstimated" style="vertical-align:middle"> 估算（?）
+          </label>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>开始时间</label><input type="date" id="projectTaskStart"></div>
+        <div class="form-group"><label>完成时间（自动计算）</label><input type="date" id="projectTaskFinish" disabled></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>前置任务</label>
+          <div id="projectTaskDepsBox" style="display:flex;flex-direction:column;gap:4px"></div>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;align-self:flex-start" data-action="addProjectTaskDep">+ 添加前置</button>
+          <span style="font-size:11px;color:var(--text-muted)">类型：FS 完成-开始 / SS 开始-开始 / FF 完成-完成 / SF 开始-完成；lag 为工作日（可负）</span>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>资源（员工）</label>
+          <div id="projectTaskResources" style="max-height:160px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px;background:var(--card-bg)"></div>
+        </div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" data-action="saveProjectTask">&#10004; 保存</button>
+        <button class="btn btn-secondary" data-action="closeModal" data-modal="projectTaskModal">取消</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 交付物上传弹窗 -->
   <div class="modal-overlay" id="deliverableModal" role="dialog" aria-modal="true" aria-label="上传交付物">
     <div class="modal">
@@ -726,6 +875,7 @@
   </div>
 
   </div><!-- end #app-page -->
+  <script src="js/vendor/frappe-gantt.umd.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

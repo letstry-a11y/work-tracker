@@ -1,3 +1,56 @@
+/* Gantt custom classes (project management) */
+.gantt .bar-wrapper.bar-critical .bar { fill: #e53935; }
+.gantt .bar-wrapper.bar-critical .bar-progress { fill: #c62828; }
+.gantt .bar-wrapper.bar-selected .bar { stroke: var(--primary-light, #2196f3); stroke-width: 2; }
+
+/* Toolbar helpers for project management page */
+.toolbar-sep {
+  display: inline-block;
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+  margin: 0 4px;
+}
+.toolbar-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+.toolbar-menu {
+  position: relative;
+  display: inline-block;
+}
+.toolbar-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  user-select: none;
+}
+.toolbar-menu > summary::-webkit-details-marker { display: none; }
+.toolbar-menu > .toolbar-menu-items {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+  z-index: 100;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+}
+.toolbar-menu > .toolbar-menu-items button {
+  width: 100%;
+  text-align: left;
+  justify-content: flex-start;
+}
+
 /* ===== Design Tokens ===== */
 :root {
   /* Spacing */

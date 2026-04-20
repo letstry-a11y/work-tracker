@@ -54,6 +54,7 @@ async function start() {
   app.use('/api/daily-logs',   auth, require('./routes/dailyLogs'));
   app.use('/api/dashboard',    auth, require('./routes/dashboard'));
   app.use('/api/objectives',    auth, require('./routes/objectives'));
+  app.use('/api/projects',      auth, require('./routes/projects'));
   app.use('/api/deliverables',  auth, require('./routes/deliverables'));
   app.use('/api/weekly-scores',  auth, require('./routes/weeklyScores'));
   app.use('/api/reviews',        auth, require('./routes/reviews'));

@@ -366,6 +366,107 @@ async function initDb() {
     saveDbSync();
   } catch (e) { /* backfill already done or no data */ }
 
+  // Project Management module tables
+  db.run(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      start_date TEXT,
+      created_by INTEGER,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS project_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      parent_task_id INTEGER DEFAULT NULL,
+      order_index INTEGER DEFAULT 0,
+      title TEXT NOT NULL,
+      duration_days REAL DEFAULT 1,
+      is_estimated INTEGER DEFAULT 0,
+      start_date TEXT,
+      finish_date TEXT,
+      predecessor_ids TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (parent_task_id) REFERENCES project_tasks(id) ON DELETE CASCADE
+    )
+  `);
+  // Migration: add objective_id / kr_id to project_tasks
+  try {
+    const ptCols = all("PRAGMA table_info(project_tasks)");
+    if (!ptCols.some(c => c.name === 'objective_id')) {
+      db.run("ALTER TABLE project_tasks ADD COLUMN objective_id INTEGER DEFAULT NULL");
+    }
+    if (!ptCols.some(c => c.name === 'kr_id')) {
+      db.run("ALTER TABLE project_tasks ADD COLUMN kr_id INTEGER DEFAULT NULL");
+    }
+    saveDbSync();
+  } catch (e) { /* migration already done */ }
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS project_task_resources (
+      task_id INTEGER NOT NULL,
+      employee_id INTEGER NOT NULL,
+      PRIMARY KEY (task_id, employee_id),
+      FOREIGN KEY (task_id) REFERENCES project_tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS project_task_deps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL,
+      predecessor_id INTEGER NOT NULL,
+      dep_type TEXT DEFAULT 'FS' CHECK(dep_type IN ('FS','SS','FF','SF')),
+      lag_days REAL DEFAULT 0,
+      UNIQUE(task_id, predecessor_id),
+      FOREIGN KEY (task_id) REFERENCES project_tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (predecessor_id) REFERENCES project_tasks(id) ON DELETE CASCADE
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS project_baselines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      saved_at TEXT DEFAULT (datetime('now','localtime')),
+      saved_by INTEGER,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS project_baseline_tasks (
+      baseline_id INTEGER NOT NULL,
+      task_id INTEGER NOT NULL,
+      start_date TEXT,
+      finish_date TEXT,
+      duration_days REAL,
+      PRIMARY KEY (baseline_id, task_id),
+      FOREIGN KEY (baseline_id) REFERENCES project_baselines(id) ON DELETE CASCADE,
+      FOREIGN KEY (task_id) REFERENCES project_tasks(id) ON DELETE CASCADE
+    )
+  `);
+  saveDbSync();
+
+  // One-time migration: convert predecessor_ids CSV to project_task_deps rows
+  try {
+    const depsCount = get("SELECT COUNT(*) as c FROM project_task_deps");
+    const csvTasks = all("SELECT id, predecessor_ids FROM project_tasks WHERE predecessor_ids IS NOT NULL AND predecessor_ids != ''");
+    if ((!depsCount || depsCount.c === 0) && csvTasks.length > 0) {
+      for (const t of csvTasks) {
+        for (const pid of String(t.predecessor_ids).split(',').map(s => Number(s.trim())).filter(Boolean)) {
+          try {
+            db.run("INSERT INTO project_task_deps (task_id, predecessor_id, dep_type, lag_days) VALUES (?, ?, 'FS', 0)", [t.id, pid]);
+          } catch (e) { /* dup skip */ }
+        }
+      }
+      saveDbSync();
+    }
+  } catch (e) { /* migration already done */ }
+
   // Phase 3.1: Add database indexes for performance
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id)',
@@ -388,6 +489,13 @@ async function initDb() {
     'CREATE INDEX IF NOT EXISTS idx_users_employee ON users(employee_id)',
     'CREATE INDEX IF NOT EXISTS idx_employees_department ON employees(department_id)',
     'CREATE INDEX IF NOT EXISTS idx_departments_leader ON departments(leader_employee_id)',
+    'CREATE INDEX IF NOT EXISTS idx_project_tasks_project ON project_tasks(project_id)',
+    'CREATE INDEX IF NOT EXISTS idx_project_tasks_parent ON project_tasks(parent_task_id)',
+    'CREATE INDEX IF NOT EXISTS idx_ptr_task ON project_task_resources(task_id)',
+    'CREATE INDEX IF NOT EXISTS idx_ptd_task ON project_task_deps(task_id)',
+    'CREATE INDEX IF NOT EXISTS idx_ptd_pred ON project_task_deps(predecessor_id)',
+    'CREATE INDEX IF NOT EXISTS idx_project_baselines_project ON project_baselines(project_id)',
+    'CREATE INDEX IF NOT EXISTS idx_pbt_baseline ON project_baseline_tasks(baseline_id)',
   ];
   for (const idx of indexes) {
     try { db.run(idx); } catch (e) { /* index already exists */ }
