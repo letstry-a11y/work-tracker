@@ -9,6 +9,7 @@ export const state = {
   objectivesCache: [],
   departmentsCache: [],
   gridWeekStart: '',
+  collapsedProjectTaskIds: new Set(),
 };
 
 export function saveSession(token, user) {

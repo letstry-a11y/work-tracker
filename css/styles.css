@@ -728,6 +728,15 @@ tbody tr:nth-child(even) { background: var(--table-stripe); }
 tbody tr:hover { background: var(--table-hover); }
 tbody tr:last-child td { border-bottom: none; }
 
+/* ===== Project Task Table Compact Rows ===== */
+#projectTaskTable td {
+  padding: 2px 4px !important;
+  line-height: 1.2;
+}
+#projectTaskTable tr {
+  height: auto;
+}
+
 .empty-table-cell {
   text-align: center;
   color: var(--text-muted);

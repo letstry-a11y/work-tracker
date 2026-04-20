@@ -130,7 +130,7 @@ export async function deleteCurrentProject() {
 export async function loadProjectTasks() {
   const tbody = document.getElementById('projectTaskTableBody');
   if (!state.currentProjectId) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-table-cell">请先选择或创建项目</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-table-cell">请先选择或创建项目</td></tr>';
     state.projectTasksCache = [];
     if (state.projectView === 'gantt') renderProjectGantt();
     return;
@@ -143,6 +143,7 @@ export async function loadProjectTasks() {
 }
 
 // Build display order: depth-first by (parent_task_id, order_index).
+// Respects collapsed nodes — skips children of collapsed parents.
 // Returns array of { task, depth, displayIndex(1-based) }.
 function buildDisplayList(tasks) {
   const byParent = new Map();
@@ -155,11 +156,12 @@ function buildDisplayList(tasks) {
     arr.sort((a, b) => (a.order_index - b.order_index) || (a.id - b.id));
   }
   const out = [];
+  const collapsed = state.collapsedProjectTaskIds;
   function walk(parentKey, depth) {
     const children = byParent.get(parentKey) || [];
     for (const t of children) {
       out.push({ task: t, depth });
-      walk(t.id, depth + 1);
+      if (!collapsed.has(t.id)) walk(t.id, depth + 1);
     }
   }
   walk(0, 0);
@@ -170,7 +172,7 @@ function renderProjectTaskTable() {
   const tbody = document.getElementById('projectTaskTableBody');
   const tasks = state.projectTasksCache;
   if (!tasks || tasks.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-table-cell">暂无任务，点击"新建任务"添加</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-table-cell">暂无任务，点击"新建任务"添加</td></tr>';
     return;
   }
   const disp = buildDisplayList(tasks);
@@ -179,7 +181,7 @@ function renderProjectTaskTable() {
 
   const mgr = canManage();
   tbody.innerHTML = disp.map(({ task: t, depth, displayIndex }) => {
-    const pad = depth * 18;
+    const pad = depth * 24;
     const isSummary = tasks.some(x => x.parent_task_id === t.id);
     const deps = t.dependencies && t.dependencies.length
       ? t.dependencies
@@ -187,20 +189,57 @@ function renderProjectTaskTable() {
           .map(id => ({ predecessor_id: Number(id), dep_type: 'FS', lag_days: 0 }));
     const predDisp = deps.map(d => {
       const num = idToIdx.get(Number(d.predecessor_id)) || '?';
-      const type = d.dep_type === 'FS' ? '' : d.dep_type;
-      const lag = Number(d.lag_days) || 0;
-      const lagStr = lag === 0 ? '' : (lag > 0 ? `+${lag}` : `${lag}`);
-      return `${num}${type}${lagStr}`;
+      return String(num);
     }).join(', ');
     const resourceDisp = (t.resources || []).map(r => esc(r.name || '')).join(', ');
-    const durationDisp = `${t.duration_days || 0} 个工作日${t.is_estimated ? '?' : ''}`;
-    const actions = mgr ? `
-      <button class="btn btn-secondary btn-sm" data-action="editProjectTask" data-id="${t.id}">编辑</button>
-      <button class="btn btn-danger btn-sm" data-action="deleteProjectTask" data-id="${t.id}">删除</button>` : '';
     const isCritical = state.criticalPathOn && state.criticalTaskIds && state.criticalTaskIds.has(t.id);
-    let rowStyle = t.id === state.selectedProjectTaskId ? 'background:rgba(33,150,243,0.1)' : '';
-    if (isCritical) rowStyle = 'background:rgba(229,57,53,0.08);box-shadow:inset 3px 0 0 #e53935';
-    const titleStyle = `padding-left:${pad}px;${isSummary ? 'font-weight:700' : ''}${isCritical ? ';color:#e53935' : ''}`;
+    const progressPercent = t.progress_percent ?? 0;
+    const isCompleted = progressPercent >= 100;
+    const isSubLevel = depth > 0;
+    let rowStyle = '';
+    if (t.id === state.selectedProjectTaskId) {
+      rowStyle = 'background:rgba(33,150,243,0.18);box-shadow:inset 3px 0 0 #42a5f5';
+    } else if (isCompleted) {
+      rowStyle = 'background:rgba(0,0,0,0.03)';
+    } else if (isSubLevel) {
+      rowStyle = 'background:rgba(33,150,243,0.04)';
+    }
+    if (isCritical && !isCompleted) rowStyle = 'background:rgba(229,57,53,0.08);box-shadow:inset 3px 0 0 #e53935';
+    const isCollapsed = state.collapsedProjectTaskIds && state.collapsedProjectTaskIds.has(t.id);
+    const toggleBtn = isSummary
+      ? `<span style="cursor:pointer;user-select:none;margin-right:2px" data-action="toggleProjectTaskCollapse" data-id="${t.id}">${isCollapsed ? '▸' : '▾'}</span>`
+      : `<span style="display:inline-block;width:14px;margin-right:2px"></span>`;
+
+    // Inline editable cells — all levels are editable
+    // For completed tasks, render as <span> with line-through (line-through doesn't work on <input>)
+    const completedText = (text, extra) => isCompleted
+      ? `<span style="text-decoration:line-through;opacity:0.7;font-size:12px;padding:2px 3px;${extra}">${esc(String(text || ''))}</span>`
+      : null;
+
+    const durInput = isCompleted
+      ? completedText(t.duration_days, 'width:60px;display:inline-block')
+      : `<input type="number" class="inline-edit" data-task-id="${t.id}" data-field="duration_days" value="${t.duration_days || 0}" min="1" step="1" style="width:60px;font-size:12px;padding:2px 3px;border:1px solid transparent;border-radius:3px;background:transparent" onfocus="this.style.borderColor='var(--primary)';this.style.background='var(--card-bg)'" onblur="this.style.borderColor='transparent';this.style.background='transparent'" title="回车或失焦保存">`;
+
+    const startDateInput = isCompleted
+      ? completedText(t.start_date, 'width:105px;display:inline-block')
+      : `<input type="date" class="inline-edit" data-task-id="${t.id}" data-field="start_date" value="${t.start_date || ''}" style="width:105px;font-size:12px;padding:2px 3px;border:1px solid transparent;border-radius:3px;background:transparent" onfocus="this.style.borderColor='var(--primary)';this.style.background='var(--card-bg)'" onblur="this.style.borderColor='transparent';this.style.background='transparent'" title="回车或失焦保存">`;
+
+    const finishDateInput = isCompleted
+      ? completedText(t.finish_date, 'width:105px;display:inline-block')
+      : `<input type="date" class="inline-edit" data-task-id="${t.id}" data-field="finish_date" value="${t.finish_date || ''}" style="width:105px;font-size:12px;padding:2px 3px;border:1px solid transparent;border-radius:3px;background:transparent" onfocus="this.style.borderColor='var(--primary)';this.style.background='var(--card-bg)'" onblur="this.style.borderColor='transparent';this.style.background='transparent'" title="回车或失焦保存">`;
+
+    const completedStyle = isCompleted ? 'text-decoration:line-through;opacity:0.7' : '';
+    const predCell = `<span style="cursor:pointer;color:var(--primary-light);font-size:12px;padding:2px 3px;display:inline-block;min-width:20px;${completedStyle}" data-action="editProjectTaskDeps" data-id="${t.id}" onclick="window._editProjectTaskDeps(${t.id})" title="点击编辑前置任务">${predDisp || '-'}</span>`;
+
+    const progressInput = isCompleted
+      ? completedText(progressPercent, 'width:50px;display:inline-block')
+      : `<input type="number" class="inline-edit" data-task-id="${t.id}" data-field="progress_percent" value="${progressPercent}" min="0" max="100" style="width:50px;font-size:12px;padding:2px 3px;border:1px solid transparent;border-radius:3px;background:transparent" onfocus="this.style.borderColor='var(--primary)';this.style.background='var(--card-bg)'" onblur="this.style.borderColor='transparent';this.style.background='transparent'" title="回车或失焦保存">`;
+
+    const resourceCell = `<span style="cursor:pointer;color:var(--primary-light);font-size:12px;padding:2px 3px;display:inline-block;min-width:20px;${completedStyle}" data-action="editProjectTaskResources" data-id="${t.id}" onclick="window._editProjectTaskResources(${t.id})" title="点击编辑资源">${resourceDisp || '-'}</span>`;
+
+    const noteInput = isCompleted
+      ? completedText(t.note || '-', 'width:100%;display:inline-block')
+      : `<input type="text" class="inline-edit" data-task-id="${t.id}" data-field="note" value="${esc(t.note || '')}" placeholder="-" style="width:100%;font-size:12px;padding:2px 3px;border:1px solid transparent;border-radius:3px;background:transparent" onfocus="this.style.borderColor='var(--primary)';this.style.background='var(--card-bg)'" onblur="this.style.borderColor='transparent';this.style.background='transparent'" title="回车或失焦保存">`;
     const okrBadge = t.objective_title
       ? `<span class="badge" style="background:rgba(156,39,176,0.15);color:#ba68c8;font-size:10px;margin-left:6px" title="${esc(t.objective_title)}">🎯 ${esc(t.objective_title)}</span>`
       : '';
@@ -222,23 +261,35 @@ function renderProjectTaskTable() {
       const sign = n > 0 ? '+' : '';
       return `<span style="color:${col};font-size:11px">${sign}${n}d</span>`;
     };
+    const titleStyle = `${isSummary ? 'font-weight:700' : ''}${isSubLevel ? 'border-left:2px solid rgba(33,150,243,0.25)' : ''}${isCritical && !isCompleted ? 'color:#e53935' : ''}${isCompleted ? 'text-decoration:line-through;opacity:0.6' : ''}`;
+    const titleInput = isCompleted
+      ? `<span style="text-decoration:line-through;opacity:0.7;font-size:12px;padding:2px 3px;width:100%;display:inline-block">${esc(t.title)}</span>`
+      : `<input type="text" class="inline-edit" data-task-id="${t.id}" data-field="title" value="${esc(t.title)}" style="font-size:12px;padding:2px 3px;border:1px solid transparent;border-radius:3px;background:transparent;${isSummary ? 'font-weight:700' : ''}width:100%" onfocus="this.style.borderColor='var(--primary)';this.style.background='var(--card-bg)'" onblur="this.style.borderColor='transparent';this.style.background='transparent'" title="失焦自动保存">`;
     const startCell = bt ? `${t.start_date || '-'}<br><span style="font-size:10px;color:var(--text-muted)">基线 ${bt.start_date || '-'}</span> ${diffCell(startDiff)}` : (t.start_date || '-');
     const finishCell = bt ? `${t.finish_date || '-'}<br><span style="font-size:10px;color:var(--text-muted)">基线 ${bt.finish_date || '-'}</span> ${diffCell(finishDiff)}` : (t.finish_date || '-');
     return `<tr data-task-id="${t.id}" data-action="selectProjectTaskRow" data-id="${t.id}" style="cursor:pointer;${rowStyle}">
-      <td>${displayIndex}</td>
-      <td style="${titleStyle}">${isSummary ? '▾ ' : ''}${esc(t.title)}${okrBadge}${krBadge}</td>
-      <td>${durationDisp}</td>
-      <td>${startCell}</td>
-      <td>${finishCell}</td>
-      <td>${predDisp || '-'}</td>
-      <td>${resourceDisp || '-'}</td>
-      <td>${actions}</td>
+      <td style="padding:2px !important;vertical-align:middle;text-align:center">${displayIndex}</td>
+      <td style="padding:2px 2px 2px ${pad}px !important;vertical-align:middle;${isSubLevel ? 'border-left:2px solid rgba(33,150,243,0.25)' : ''}">${toggleBtn}${titleInput}${okrBadge}${krBadge}</td>
+      <td style="padding:2px !important;vertical-align:middle">${durInput}</td>
+      <td style="padding:2px !important;vertical-align:middle">${startDateInput}</td>
+      <td style="padding:2px !important;vertical-align:middle">${finishDateInput}</td>
+      <td style="padding:2px !important;vertical-align:middle">${predCell}</td>
+      <td style="padding:2px !important;vertical-align:middle">${progressInput}</td>
+      <td style="padding:2px !important;vertical-align:middle">${resourceCell}</td>
+      <td style="padding:2px !important;vertical-align:middle">${noteInput}</td>
     </tr>`;
   }).join('');
 }
 
 export function selectProjectTaskRow(id) {
   state.selectedProjectTaskId = id;
+  const editBtn = document.getElementById('projectTaskEditBtn');
+  const deleteBtn = document.getElementById('projectTaskDeleteBtn');
+  const show = id !== null && canManage();
+  if (editBtn) editBtn.style.display = show ? '' : 'none';
+  if (deleteBtn) deleteBtn.style.display = show ? '' : 'none';
+  // Don't re-render if user is actively editing an inline input
+  if (document.activeElement && document.activeElement.classList.contains('inline-edit')) return;
   renderProjectTaskTable();
 }
 
@@ -402,8 +453,31 @@ export async function showProjectTaskModal() {
   document.getElementById('projectTaskEstimated').checked = false;
   document.getElementById('projectTaskStart').value = '';
   document.getElementById('projectTaskFinish').value = '';
+  document.getElementById('projectTaskProgress').value = '0';
+  document.getElementById('projectTaskNote').value = '';
   populateTaskModalSelects(null);
+  if (state.selectedProjectTaskId) {
+    document.getElementById('projectTaskParent').value = String(state.selectedProjectTaskId);
+  }
   document.getElementById('projectTaskModalTitle').textContent = '新建任务';
+  document.getElementById('projectTaskModal').classList.add('show');
+}
+
+export async function showProjectTaskModalTopLevel() {
+  if (!state.currentProjectId) return toast('请先选择项目', 'error');
+  await ensureObjectivesCache();
+  populateTaskTitleDatalist();
+  document.getElementById('projectTaskEditId').value = '';
+  document.getElementById('projectTaskTitle').value = '';
+  document.getElementById('projectTaskDuration').value = '1';
+  document.getElementById('projectTaskEstimated').checked = false;
+  document.getElementById('projectTaskStart').value = '';
+  document.getElementById('projectTaskFinish').value = '';
+  document.getElementById('projectTaskProgress').value = '0';
+  document.getElementById('projectTaskNote').value = '';
+  populateTaskModalSelects(null);
+  document.getElementById('projectTaskParent').value = '';
+  document.getElementById('projectTaskModalTitle').textContent = '新建顶级任务';
   document.getElementById('projectTaskModal').classList.add('show');
 }
 
@@ -418,6 +492,8 @@ export async function editProjectTask(id) {
   document.getElementById('projectTaskEstimated').checked = !!t.is_estimated;
   document.getElementById('projectTaskStart').value = t.start_date || '';
   document.getElementById('projectTaskFinish').value = t.finish_date || '';
+  document.getElementById('projectTaskProgress').value = t.progress_percent ?? 0;
+  document.getElementById('projectTaskNote').value = t.note || '';
   populateTaskModalSelects(t);
   document.getElementById('projectTaskModalTitle').textContent = '编辑任务';
   document.getElementById('projectTaskModal').classList.add('show');
@@ -438,7 +514,9 @@ export async function saveProjectTask() {
     dependencies,
     resource_ids: resourceIds,
     objective_id: linkage.objective_id,
-    kr_id: linkage.kr_id
+    kr_id: linkage.kr_id,
+    progress_percent: parseInt(document.getElementById('projectTaskProgress').value) || 0,
+    note: document.getElementById('projectTaskNote').value.trim()
   };
   if (!body.title) return toast('任务名称不能为空', 'error');
   const url = editId
@@ -458,6 +536,64 @@ export async function deleteProjectTask(id) {
   if (!res) return;
   toast('已删除');
   loadProjectTasks();
+}
+
+export function toggleProjectTaskCollapse(id) {
+  const collapsed = state.collapsedProjectTaskIds;
+  if (collapsed.has(id)) collapsed.delete(id);
+  else collapsed.add(id);
+  renderProjectTaskTable();
+}
+
+export async function inlineUpdateTask(taskId, field, value) {
+  const t = state.projectTasksCache.find(x => x.id === taskId);
+  if (!t) return;
+  let parsed = value;
+  if (field === 'duration_days') parsed = parseFloat(value) || 1;
+  if (field === 'progress_percent') parsed = Math.min(100, Math.max(0, parseInt(value) || 0));
+  if (field === 'start_date' || field === 'finish_date') parsed = value || null;
+  if (field === 'note') parsed = value.trim();
+  const body = { [field]: parsed };
+  const res = await api(`/api/projects/${state.currentProjectId}/tasks/${taskId}`, { method: 'PUT', body });
+  if (!res) { renderProjectTaskTable(); return; }
+  toast('已更新');
+  loadProjectTasks();
+}
+
+export async function editProjectTaskDeps(id) {
+  const t = state.projectTasksCache.find(x => x.id === id);
+  if (!t) return;
+  await ensureObjectivesCache();
+  populateTaskTitleDatalist();
+  document.getElementById('projectTaskEditId').value = id;
+  document.getElementById('projectTaskTitle').value = prefillTaskTitleFromLinkage(t);
+  document.getElementById('projectTaskDuration').value = t.duration_days || 1;
+  document.getElementById('projectTaskEstimated').checked = !!t.is_estimated;
+  document.getElementById('projectTaskStart').value = t.start_date || '';
+  document.getElementById('projectTaskFinish').value = t.finish_date || '';
+  document.getElementById('projectTaskProgress').value = t.progress_percent ?? 0;
+  document.getElementById('projectTaskNote').value = t.note || '';
+  populateTaskModalSelects(t);
+  document.getElementById('projectTaskModalTitle').textContent = '编辑前置任务';
+  document.getElementById('projectTaskModal').classList.add('show');
+}
+
+export async function editProjectTaskResources(id) {
+  const t = state.projectTasksCache.find(x => x.id === id);
+  if (!t) return;
+  await ensureObjectivesCache();
+  populateTaskTitleDatalist();
+  document.getElementById('projectTaskEditId').value = id;
+  document.getElementById('projectTaskTitle').value = prefillTaskTitleFromLinkage(t);
+  document.getElementById('projectTaskDuration').value = t.duration_days || 1;
+  document.getElementById('projectTaskEstimated').checked = !!t.is_estimated;
+  document.getElementById('projectTaskStart').value = t.start_date || '';
+  document.getElementById('projectTaskFinish').value = t.finish_date || '';
+  document.getElementById('projectTaskProgress').value = t.progress_percent ?? 0;
+  document.getElementById('projectTaskNote').value = t.note || '';
+  populateTaskModalSelects(t);
+  document.getElementById('projectTaskModalTitle').textContent = '编辑资源';
+  document.getElementById('projectTaskModal').classList.add('show');
 }
 
 // ===== Indent / outdent / move =====
@@ -848,3 +984,7 @@ export async function exportProjectXml() {
     toast('导出失败: ' + err.message, 'error');
   }
 }
+
+// Expose for inline onclick handlers in HTML
+window._editProjectTaskDeps = editProjectTaskDeps;
+window._editProjectTaskResources = editProjectTaskResources;

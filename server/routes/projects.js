@@ -134,6 +134,125 @@ function setTaskDeps(taskId, deps) {
   }
 }
 
+// ===== Auto-schedule: propagate date changes to children and downstream dependents =====
+
+function dayDiff(a, b) {
+  if (!a || !b) return 0;
+  return Math.round((new Date(a) - new Date(b)) / 86400000);
+}
+
+function shiftDateByDays(dateStr, days) {
+  if (!dateStr || days === 0) return dateStr;
+  const d = parseDate(dateStr);
+  if (!d) return dateStr;
+  d.setDate(d.getDate() + days);
+  return toDateStr(d);
+}
+
+function getAllDescendantIds(tasks, parentId) {
+  const result = [];
+  for (const t of tasks) {
+    if (t.parent_task_id === parentId) {
+      result.push(t.id);
+      result.push(...getAllDescendantIds(tasks, t.id));
+    }
+  }
+  return result;
+}
+
+function propagateDateChanges(projectId, changedTaskId, origStart) {
+  const tasks = all('SELECT * FROM project_tasks WHERE project_id = ? ORDER BY order_index, id', [projectId]);
+  const changed = tasks.find(t => t.id === changedTaskId);
+  if (!changed || !changed.start_date) return;
+
+  // Build deps map
+  const taskIds = tasks.map(t => t.id);
+  const depsMap = loadTaskDeps(taskIds);
+
+  // 1. Shift all direct children by the same delta as the parent
+  const children = tasks.filter(t => t.parent_task_id === changedTaskId);
+  for (const child of children) {
+    const daysDelta = dayDiff(changed.start_date, origStart);
+    const childNewStart = shiftDateByDays(child.start_date, daysDelta);
+    const childNewFinish = child.finish_date ? shiftDateByDays(child.finish_date, daysDelta) : child.finish_date;
+    if (childNewStart !== child.start_date || childNewFinish !== child.finish_date) {
+      const childOrigStart = child.start_date;
+      run('UPDATE project_tasks SET start_date=?, finish_date=? WHERE id=?', [childNewStart, childNewFinish, child.id]);
+      // Recursively propagate to grandchildren
+      propagateDateChanges(projectId, child.id, childOrigStart);
+    }
+  }
+
+  // 2. Bubble up: recalc parent dates from children
+  bubbleUpParentDates(projectId, changedTaskId, tasks);
+
+  // 3. Find all tasks that depend on changedTaskId (directly or via descendants)
+  const changedAndDescendants = new Set([changedTaskId, ...getAllDescendantIds(tasks, changedTaskId)]);
+  const depTasks = [];
+  for (const t of tasks) {
+    const deps = depsMap[t.id] || [];
+    for (const d of deps) {
+      if (changedAndDescendants.has(Number(d.predecessor_id))) {
+        depTasks.push(t);
+        break;
+      }
+    }
+  }
+
+  for (const depTask of depTasks) {
+    const newStart = computeStartFromDeps(projectId, depTask.dependencies || depsMap[depTask.id] || [], depTask.duration_days);
+    if (!newStart) continue;
+    const newFinish = depTask.finish_date
+      ? shiftDateByDays(newStart, dayDiff(depTask.finish_date, depTask.start_date))
+      : addWorkdays(newStart, depTask.duration_days);
+    if (newStart !== depTask.start_date || newFinish !== depTask.finish_date) {
+      const depOrigStart = depTask.start_date;
+      run('UPDATE project_tasks SET start_date=?, finish_date=? WHERE id=?', [newStart, newFinish, depTask.id]);
+      depTask.start_date = newStart;
+      depTask.finish_date = newFinish;
+      propagateDateChanges(projectId, depTask.id, depOrigStart);
+      depTask.start_date = depOrigStart;
+    }
+  }
+}
+
+// Bubble up: ensure parent.start_date <= earliest child start_date
+// and parent.finish_date >= latest child finish_date
+function bubbleUpParentDates(projectId, taskId, tasks) {
+  const task = tasks.find(t => t.id === taskId);
+  if (!task || !task.parent_task_id) return;
+  const parent = tasks.find(t => t.id === task.parent_task_id);
+  if (!parent) return;
+  const siblings = tasks.filter(t => t.parent_task_id === parent.id);
+  const childStarts = siblings.map(c => c.start_date).filter(Boolean);
+  const childFinishes = siblings.map(c => c.finish_date).filter(Boolean);
+  if (!childStarts.length && !childFinishes.length) return;
+
+  let newStart = parent.start_date;
+  let newFinish = parent.finish_date;
+
+  // Parent start should not be later than earliest child start
+  if (childStarts.length) {
+    const earliestChildStart = childStarts.reduce((a, b) => a < b ? a : b);
+    if (!newStart || earliestChildStart < newStart) newStart = earliestChildStart;
+  }
+
+  // Parent finish should not be earlier than latest child finish
+  if (childFinishes.length) {
+    const latestChildFinish = childFinishes.reduce((a, b) => a > b ? a : b);
+    if (!newFinish || latestChildFinish > newFinish) newFinish = latestChildFinish;
+  }
+
+  if (newStart !== parent.start_date || newFinish !== parent.finish_date) {
+    run('UPDATE project_tasks SET start_date=?, finish_date=? WHERE id=?', [newStart, newFinish, parent.id]);
+    // Update in-memory copy
+    parent.start_date = newStart;
+    parent.finish_date = newFinish;
+    // Continue bubbling up
+    bubbleUpParentDates(projectId, parent.id, tasks);
+  }
+}
+
 function setTaskResources(taskId, resourceIds) {
   run('DELETE FROM project_task_resources WHERE task_id = ?', [taskId]);
   if (!Array.isArray(resourceIds)) return;
@@ -246,7 +365,10 @@ function normalizeTaskBody(projectId, body, existing) {
   if (!start_date && deps && deps.length) {
     start_date = computeStartFromDeps(projectId, deps, duration_days);
   }
-  const finish_date = start_date && duration_days > 0 ? addWorkdays(start_date, duration_days) : null;
+  // finish_date: if explicitly provided, use it; otherwise calculate from start + duration
+  const finish_date = body.finish_date !== undefined
+    ? (body.finish_date || null)
+    : (start_date && duration_days > 0 ? addWorkdays(start_date, duration_days) : null);
 
   // objective_id / kr_id (personal OKRs only)
   let objective_id = body.objective_id !== undefined
@@ -268,7 +390,14 @@ function normalizeTaskBody(projectId, body, existing) {
 
   const predecessor_ids = deps !== null ? depsToCSV(deps) : (existing ? (existing.predecessor_ids || '') : '');
 
-  return { title, duration_days, is_estimated, parent_task_id, predecessor_ids, start_date, finish_date, objective_id, kr_id, deps };
+  const progress_percent = body.progress_percent !== undefined
+    ? Math.min(100, Math.max(0, Number(body.progress_percent) || 0))
+    : (existing ? existing.progress_percent : 0);
+  const note = body.note !== undefined
+    ? (body.note || '')
+    : (existing ? existing.note : '');
+
+  return { title, duration_days, is_estimated, parent_task_id, predecessor_ids, start_date, finish_date, objective_id, kr_id, progress_percent, note, deps };
 }
 
 router.post('/:id/tasks', (req, res) => {
@@ -289,13 +418,20 @@ router.post('/:id/tasks', (req, res) => {
   const order_index = (maxRow && maxRow.m !== undefined ? maxRow.m : -1) + 1;
 
   const r = run(
-    `INSERT INTO project_tasks (project_id, parent_task_id, order_index, title, duration_days, is_estimated, start_date, finish_date, predecessor_ids, objective_id, kr_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [projectId, data.parent_task_id, order_index, data.title, data.duration_days, data.is_estimated, data.start_date, data.finish_date, data.predecessor_ids, data.objective_id, data.kr_id]
+    `INSERT INTO project_tasks (project_id, parent_task_id, order_index, title, duration_days, is_estimated, start_date, finish_date, predecessor_ids, objective_id, kr_id, progress_percent, note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [projectId, data.parent_task_id, order_index, data.title, data.duration_days, data.is_estimated, data.start_date, data.finish_date, data.predecessor_ids, data.objective_id, data.kr_id, data.progress_percent, data.note]
   );
   const newId = r.lastInsertRowid;
   setTaskResources(newId, req.body.resource_ids);
   if (data.deps !== null) setTaskDeps(newId, data.deps);
+
+  // Bubble up parent dates when creating a task with a parent
+  if (data.parent_task_id) {
+    const tasks = all('SELECT * FROM project_tasks WHERE project_id = ? ORDER BY order_index, id', [projectId]);
+    bubbleUpParentDates(projectId, newId, tasks);
+  }
+
   res.json({ id: newId });
 });
 
@@ -309,12 +445,39 @@ router.put('/:id/tasks/:taskId', (req, res) => {
   const data = normalizeTaskBody(projectId, req.body, existing);
   if (!data.title) return res.status(400).json({ error: '任务名称不能为空' });
 
+  const origStart = existing.start_date;
+
+  // When dependencies are provided, recalculate start_date from deps
+  if (data.deps && data.deps.length) {
+    const calcStart = computeStartFromDeps(projectId, data.deps, data.duration_days);
+    if (calcStart && (!data.start_date || calcStart > data.start_date)) {
+      data.start_date = calcStart;
+      data.finish_date = data.duration_days > 0 ? addWorkdays(calcStart, data.duration_days) : calcStart;
+    }
+  }
+
   run(
-    `UPDATE project_tasks SET parent_task_id=?, title=?, duration_days=?, is_estimated=?, start_date=?, finish_date=?, predecessor_ids=?, objective_id=?, kr_id=? WHERE id=?`,
-    [data.parent_task_id, data.title, data.duration_days, data.is_estimated, data.start_date, data.finish_date, data.predecessor_ids, data.objective_id, data.kr_id, taskId]
+    `UPDATE project_tasks SET parent_task_id=?, title=?, duration_days=?, is_estimated=?, start_date=?, finish_date=?, predecessor_ids=?, objective_id=?, kr_id=?, progress_percent=?, note=? WHERE id=?`,
+    [data.parent_task_id, data.title, data.duration_days, data.is_estimated, data.start_date, data.finish_date, data.predecessor_ids, data.objective_id, data.kr_id, data.progress_percent, data.note, taskId]
   );
   if (req.body.resource_ids !== undefined) setTaskResources(taskId, req.body.resource_ids);
   if (data.deps !== null) setTaskDeps(taskId, data.deps);
+
+  // Shift children by same delta when parent start_date changes
+  if (origStart && origStart !== data.start_date) {
+    const tasks = all('SELECT * FROM project_tasks WHERE project_id = ? ORDER BY order_index, id', [projectId]);
+    const daysDelta = dayDiff(data.start_date, origStart);
+    for (const child of tasks.filter(t => t.parent_task_id === taskId)) {
+      const childNewStart = shiftDateByDays(child.start_date, daysDelta);
+      const childNewFinish = child.finish_date ? shiftDateByDays(child.finish_date, daysDelta) : child.finish_date;
+      run('UPDATE project_tasks SET start_date=?, finish_date=? WHERE id=?', [childNewStart, childNewFinish, child.id]);
+    }
+  }
+
+  // Always bubble up parent dates after any update to ensure parent covers all children
+  const tasks = all('SELECT * FROM project_tasks WHERE project_id = ? ORDER BY order_index, id', [projectId]);
+  bubbleUpParentDates(projectId, taskId, tasks);
+
   res.json({ success: true });
 });
 

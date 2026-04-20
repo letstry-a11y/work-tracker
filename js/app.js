@@ -13,7 +13,7 @@ import { loadReviews, doReviewConfirm, showReject, doReject, doReviewDelete } fr
 import { loadEmployees, deleteEmployee, showEmployeeModal, saveEmployee, loadUsers, toggleUserRole, renameUser, doRenameUser, resetPassword, deleteUser, showUserModal, saveUser, editUser, saveEditUser, showUserDetail } from './employees.js';
 import { loadWeeklyGrid, gridPrevWeek, gridNextWeek, showGridDetail } from './weeklyGrid.js';
 import { loadDepartments, showDeptModal, saveDept, deleteDept, manageDeptMembers, saveDeptMembers } from './departments.js';
-import { loadProjects, showProjectModal, editCurrentProject, saveProject, deleteCurrentProject, showProjectTaskModal, editProjectTask, saveProjectTask, deleteProjectTask, selectProjectTaskRow, indentProjectTask, outdentProjectTask, moveProjectTaskUp, moveProjectTaskDown, switchProjectView, ganttZoom, addProjectTaskDep, removeProjectTaskDep, importProjectXmlTrigger, exportProjectXml, toggleCriticalPath, saveBaseline, deleteSelectedBaseline, toggleResourceHistogram, importProjectMppTrigger } from './projects.js';
+import { loadProjects, showProjectModal, editCurrentProject, saveProject, deleteCurrentProject, showProjectTaskModal, showProjectTaskModalTopLevel, editProjectTask, editProjectTaskDeps, editProjectTaskResources, saveProjectTask, deleteProjectTask, selectProjectTaskRow, indentProjectTask, outdentProjectTask, moveProjectTaskUp, moveProjectTaskDown, switchProjectView, ganttZoom, addProjectTaskDep, removeProjectTaskDep, importProjectXmlTrigger, exportProjectXml, toggleCriticalPath, saveBaseline, deleteSelectedBaseline, toggleResourceHistogram, importProjectMppTrigger, toggleProjectTaskCollapse, inlineUpdateTask } from './projects.js';
 
 // Set up the login page reference for API module
 setShowLoginPage(showLoginPage);
@@ -60,7 +60,19 @@ document.body.addEventListener('click', (e) => {
   }
 });
 
+// Inline edit inputs: save on blur
+document.body.addEventListener('focusout', (e) => {
+  const input = e.target;
+  if (!input.classList.contains('inline-edit')) return;
+  const taskId = Number(input.dataset.taskId);
+  const field = input.dataset.field;
+  const value = input.value;
+  if (taskId && field) inlineUpdateTask(taskId, field, value);
+});
+
 document.body.addEventListener('click', (e) => {
+  // Prevent row selection when clicking inline edit inputs
+  if (e.target.matches('input.inline-edit')) return;
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
 
@@ -141,12 +153,16 @@ document.body.addEventListener('click', (e) => {
     case 'saveProject': saveProject(); break;
     case 'deleteCurrentProject': deleteCurrentProject(); break;
     case 'showProjectTaskModal': showProjectTaskModal(); break;
-    case 'editProjectTask': editProjectTask(id); break;
+    case 'showProjectTaskModalTopLevel': showProjectTaskModalTopLevel(); break;
+    case 'editProjectTask': editProjectTask(id || state.selectedProjectTaskId); break;
+    case 'editProjectTaskDeps': editProjectTaskDeps(id); break;
+    case 'editProjectTaskResources': editProjectTaskResources(id); break;
     case 'saveProjectTask': saveProjectTask(); break;
-    case 'deleteProjectTask': deleteProjectTask(id); break;
+    case 'deleteProjectTask': deleteProjectTask(id || state.selectedProjectTaskId); break;
     case 'selectProjectTaskRow': selectProjectTaskRow(id); break;
     case 'indentProjectTask': indentProjectTask(); break;
     case 'outdentProjectTask': outdentProjectTask(); break;
+    case 'toggleProjectTaskCollapse': toggleProjectTaskCollapse(id); break;
     case 'moveProjectTaskUp': moveProjectTaskUp(); break;
     case 'moveProjectTaskDown': moveProjectTaskDown(); break;
     case 'switchProjectView': switchProjectView(btn.dataset.projectView); break;
