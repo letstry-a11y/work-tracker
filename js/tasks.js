@@ -17,18 +17,27 @@ export async function loadTasks() {
   if (o === 'none') params.set('objective_id', '0');
   else if (o) params.set('objective_id', o);
 
-  const data = await api('/api/tasks?' + params);
+  let data = await api('/api/tasks?' + params);
   if (!data) return;
+
+  // 部门筛选：未选具体员工时，按部门内员工过滤
+  const deptId = document.getElementById('taskFilterDept') && document.getElementById('taskFilterDept').value;
+  if (deptId && !a) {
+    const deptEmpIds = (state.employeesCache || []).filter(e => String(e.department_id) === deptId).map(e => e.id);
+    data = data.filter(t => deptEmpIds.includes(t.assignee_id));
+  }
+
   state.tasksCache = data;
 
   const tbody = document.getElementById('taskTableBody');
   const isAdmin = state.currentUser.role === 'admin';
+  const canManage = isAdmin || state.currentUser.role === 'dept_leader';
 
   tbody.innerHTML = (state.tasksCache || []).map(t => {
     const csBadge = t.confirm_status && t.confirm_status !== 'none'
       ? `<span class="badge badge-${t.confirm_status === 'pending' ? 'P1' : t.confirm_status === 'confirmed' ? 'completed' : 'overdue'}" style="margin-left:6px;font-size:10px">${confirmStatusText(t.confirm_status)}</span>` : '';
     let actions = '';
-    if (isAdmin) {
+    if (canManage) {
       if (t.confirm_status === 'pending') {
         actions = `<button class="btn btn-success btn-sm" data-action="reviewConfirm" data-type="task" data-id="${t.id}">通过</button>
                    <button class="btn btn-danger btn-sm" data-action="showReject" data-type="task" data-id="${t.id}">打回</button>`;
@@ -53,12 +62,12 @@ export async function loadTasks() {
       <td>${t.deadline || '-'}</td>
       <td>${actions}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="10" class="empty-table-cell">暂无任务</td></tr>';
+  }).join('') || '<tr><td colspan="10" class="empty-table-cell">暂无KR</td></tr>';
 }
 
 export function showTaskModal(editId) {
   document.getElementById('taskEditId').value = '';
-  document.getElementById('taskModalTitle').textContent = '创建任务';
+  document.getElementById('taskModalTitle').textContent = '创建KR';
   document.getElementById('taskTitle').value = '';
   document.getElementById('taskDesc').value = '';
   document.getElementById('taskAssignee').value = '';
@@ -66,11 +75,7 @@ export function showTaskModal(editId) {
   document.getElementById('taskDifficulty').value = '3';
   document.getElementById('taskEstHours').value = '8';
   document.getElementById('taskDeadline').value = '';
-  // Reset to base options when creating
-  const statusEl = document.getElementById('taskStatus');
-  const completedOpt = statusEl.querySelector('option[value="completed"]');
-  if (completedOpt) completedOpt.remove();
-  statusEl.value = 'pending';
+  document.getElementById('taskStatus').value = 'pending';
   document.getElementById('taskObjective').value = '';
   document.getElementById('taskModal').classList.add('show');
 }
@@ -79,7 +84,7 @@ export function editTask(id) {
   const t = state.tasksCache.find(x => x.id === id);
   if (!t) return;
   document.getElementById('taskEditId').value = id;
-  document.getElementById('taskModalTitle').textContent = '编辑任务';
+  document.getElementById('taskModalTitle').textContent = '编辑KR';
   document.getElementById('taskTitle').value = t.title;
   document.getElementById('taskDesc').value = t.description;
   document.getElementById('taskAssignee').value = t.assignee_id || '';
@@ -89,12 +94,7 @@ export function editTask(id) {
   document.getElementById('taskDifficulty').value = t.difficulty;
   document.getElementById('taskEstHours').value = t.estimated_hours;
   document.getElementById('taskDeadline').value = t.deadline || '';
-  // Admin gets "已完成" option
-  const statusEl = document.getElementById('taskStatus');
-  if (state.currentUser.role === 'admin' && !statusEl.querySelector('option[value="completed"]')) {
-    statusEl.insertAdjacentHTML('beforeend', '<option value="completed">已完成</option>');
-  }
-  statusEl.value = t.status;
+  document.getElementById('taskStatus').value = t.status;
   document.getElementById('taskObjective').value = t.objective_id || '';
   document.getElementById('taskModal').classList.add('show');
 }
@@ -121,12 +121,12 @@ export async function saveTask() {
     if (!res) return;
   }
   closeModal('taskModal');
-  toast('任务已保存');
+  toast('KR已保存');
   loadTasks();
 }
 
 export async function deleteTask(id) {
-  const ok = await confirmDialog({ title: '删除任务', message: '确认删除该任务？此操作不可撤销。' });
+  const ok = await confirmDialog({ title: '删除KR', message: '确认删除该KR？此操作不可撤销。' });
   if (!ok) return;
   const res = await api('/api/tasks/' + id, { method: 'DELETE' });
   if (!res) return;

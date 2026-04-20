@@ -7,7 +7,10 @@ import { esc, parseLocalDate, toDateStr, closeModal } from './utils.js';
 export async function loadWeeklyGrid(weekStart) {
   if (!weekStart) weekStart = state.gridWeekStart;
   state.gridWeekStart = weekStart;
-  const data = await api('/api/dashboard/weekly-grid?week_start=' + weekStart);
+  const deptEl = document.getElementById('dashboardDeptFilter');
+  const deptId = deptEl ? deptEl.value : '';
+  const deptParam = deptId ? '&department_id=' + deptId : '';
+  const data = await api('/api/dashboard/weekly-grid?week_start=' + weekStart + deptParam);
   if (!data) return;
   document.getElementById('gridWeekLabel').textContent = weekStart + ' ~ ' + data.weekEnd;
   const container = document.getElementById('weeklyGrid');
@@ -60,7 +63,7 @@ export async function showGridDetail(empId, empName, date) {
   } else {
     content.innerHTML = logs.map(l => `<div class="detail-log-item">
       <div class="detail-log-header">
-        <strong>${esc(l.task_title || '无关联任务')}</strong>
+        <strong>${esc(l.task_title || '无关联KR')}</strong>
         <span style="margin-left:auto;font-weight:700;color:var(--primary-light)">${l.hours}h</span>
       </div>
       ${l.work_content ? `<div class="detail-log-body">${esc(l.work_content)}</div>` : ''}

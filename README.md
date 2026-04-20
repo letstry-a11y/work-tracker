@@ -1,6 +1,6 @@
-# 工作追踪与评分系统
+# 畅视OKR管理系统
 
-员工工作追踪与自动评分系统，基于 Node.js + SQLite + 原生 HTML/CSS/JS 构建。
+畅视OKR管理系统，基于 Node.js + SQLite + 原生 HTML/CSS/JS 构建。
 
 ## 功能特性
 

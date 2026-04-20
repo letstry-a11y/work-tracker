@@ -1,3 +1,56 @@
+/* Gantt custom classes (project management) */
+.gantt .bar-wrapper.bar-critical .bar { fill: #e53935; }
+.gantt .bar-wrapper.bar-critical .bar-progress { fill: #c62828; }
+.gantt .bar-wrapper.bar-selected .bar { stroke: var(--primary-light, #2196f3); stroke-width: 2; }
+
+/* Toolbar helpers for project management page */
+.toolbar-sep {
+  display: inline-block;
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+  margin: 0 4px;
+}
+.toolbar-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+.toolbar-menu {
+  position: relative;
+  display: inline-block;
+}
+.toolbar-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  user-select: none;
+}
+.toolbar-menu > summary::-webkit-details-marker { display: none; }
+.toolbar-menu > .toolbar-menu-items {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+  z-index: 100;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+}
+.toolbar-menu > .toolbar-menu-items button {
+  width: 100%;
+  text-align: left;
+  justify-content: flex-start;
+}
+
 /* ===== Design Tokens ===== */
 :root {
   /* Spacing */
@@ -1245,3 +1298,10 @@ textarea:focus-visible,
 .mt-md { margin-top: var(--space-md); }
 .mb-md { margin-bottom: var(--space-md); }
 .gap-sm { gap: var(--space-sm); }
+
+/* Objective sub-tabs */
+.obj-sub-tabs { display:flex; gap:0; margin:12px 0 0; border-bottom:2px solid var(--border); }
+.obj-sub-tab { padding:10px 20px; background:none; border:none; color:var(--text-muted); font-size:14px; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; font-weight:500; transition:all .2s; }
+.obj-sub-tab:hover { color:var(--text); background:var(--primary-glow); }
+.obj-sub-tab.active { color:var(--primary-light); border-bottom-color:var(--primary-light); font-weight:600; }
+.obj-tab-pane { margin-top:12px; }

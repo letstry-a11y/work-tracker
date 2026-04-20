@@ -6,13 +6,16 @@ import { esc, statusText, parseLocalDate, toDateStr } from './utils.js';
 import { loadWeeklyGrid } from './weeklyGrid.js';
 
 export async function loadDashboard() {
-  const data = await api('/api/dashboard');
+  const deptEl = document.getElementById('dashboardDeptFilter');
+  const deptId = deptEl ? deptEl.value : '';
+  const qs = deptId ? '?department_id=' + deptId : '';
+  const data = await api('/api/dashboard' + qs);
   if (!data) return;
   document.getElementById('dashboardStats').innerHTML = `
     <div class="stat-card info">
       <div class="stat-icon">&#128203;</div>
       <div class="stat-value">${data.totalTasks}</div>
-      <div class="stat-label">总任务数</div>
+      <div class="stat-label">总KR数</div>
     </div>
     <div class="stat-card success">
       <div class="stat-icon">&#10004;</div>
@@ -42,10 +45,10 @@ export async function loadDashboard() {
         <span class="badge badge-in_progress">${obj.kr_completed || 0}/${obj.kr_count || 0} KR</span>
         <div class="progress-bar" style="width:140px"><div class="fill" style="width:${obj.progress || 0}%">${obj.progress || 0}%</div></div>
       </div>
-    </div>`).join('') || '<div class="empty-state"><div class="empty-state-icon">&#127919;</div><div class="empty-state-text">暂无目标</div><div class="empty-state-hint">创建目标来跟踪团队 OKR 进度</div></div>';
+    </div>`).join('') || '<div class="empty-state"><div class="empty-state-icon">&#127919;</div><div class="empty-state-text">暂无OKR</div><div class="empty-state-hint">创建OKR来跟踪团队进度</div></div>';
   document.getElementById('overdueList').innerHTML = (data.overdueList || []).map(t =>
     `<div class="overdue-item"><span class="task-name">&#9888; ${esc(t.title)} <span style="color:var(--text-muted);font-size:12px">(${esc(t.assignee_name) || '未指派'})</span>${t.objective_title ? ' <span class="badge badge-objective" style="font-size:9px">' + esc(t.objective_title) + '</span>' : ''}</span><span class="deadline">${t.deadline || '-'}</span></div>`
-  ).join('') || '<div class="empty-state"><div class="empty-state-icon">&#127881;</div><div class="empty-state-text">无延期任务</div><div class="empty-state-hint">所有任务均在进度内</div></div>';
+  ).join('') || '<div class="empty-state"><div class="empty-state-icon">&#127881;</div><div class="empty-state-text">无延期KR</div><div class="empty-state-hint">所有KR均在进度内</div></div>';
   await loadWeeklyGrid(data.weekStart);
 }
 
@@ -98,10 +101,10 @@ export async function loadEmpDashboard() {
       <div style="padding:12px 0;border-bottom:1px solid var(--border-light);display:flex;align-items:center;gap:10px">
         <span style="font-size:14px;flex:1;font-weight:500">${esc(t.title)}</span>
         <span class="badge badge-${t.status}">${statusText(t.status)}</span>
-      </div>`).join('') || '<div class="empty-state"><div class="empty-state-icon">&#128203;</div><div class="empty-state-text">暂无任务</div></div>';
+      </div>`).join('') || '<div class="empty-state"><div class="empty-state-icon">&#128203;</div><div class="empty-state-text">暂无KR</div></div>';
   }
   document.getElementById('empTaskList').innerHTML = taskHtml;
   document.getElementById('empOverdueList').innerHTML = (stats.overdueList || []).map(t =>
     `<div class="overdue-item"><span class="task-name">&#9888; ${esc(t.title)}</span><span class="deadline">${t.deadline || '-'}</span></div>`
-  ).join('') || '<div class="empty-state"><div class="empty-state-icon">&#127881;</div><div class="empty-state-text">无延期任务</div><div class="empty-state-hint">所有任务均在进度内</div></div>';
+  ).join('') || '<div class="empty-state"><div class="empty-state-icon">&#127881;</div><div class="empty-state-text">无延期KR</div><div class="empty-state-hint">所有KR均在进度内</div></div>';
 }

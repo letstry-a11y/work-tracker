@@ -123,3 +123,10 @@ export function getMonday() {
   monday.setDate(today.getDate() - dow + 1);
   return toDateStr(monday);
 }
+
+// Get current Sunday (end of ISO week)
+export function getSunday() {
+  const monday = new Date(getMonday());
+  monday.setDate(monday.getDate() + 6);
+  return toDateStr(monday);
+}

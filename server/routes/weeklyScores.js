@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { all, get, run } = require('../db');
-const { adminOnly } = require('../auth/middleware');
+const { adminOnly, getDeptEmployeeIds } = require('../auth/middleware');
 
 // GET /api/weekly-scores
 router.get('/', (req, res) => {
@@ -9,8 +9,16 @@ router.get('/', (req, res) => {
   let sql = 'SELECT ws.*, e.name as employee_name FROM weekly_scores ws LEFT JOIN employees e ON ws.employee_id = e.id WHERE 1=1';
   const params = [];
 
-  // 员工只能看自己的评分
-  if (req.user.role !== 'admin') {
+  if (req.user.role === 'dept_leader' && req.user.department_id) {
+    const deptEmpIds = getDeptEmployeeIds(req.user.department_id);
+    if (deptEmpIds.length > 0) {
+      sql += ` AND ws.employee_id IN (${deptEmpIds.map(() => '?').join(',')})`;
+      params.push(...deptEmpIds);
+    } else {
+      sql += ' AND 1=0';
+    }
+    if (employee_id) { sql += ' AND ws.employee_id = ?'; params.push(Number(employee_id)); }
+  } else if (req.user.role !== 'admin') {
     if (req.user.employee_id) {
       sql += ' AND ws.employee_id = ?';
       params.push(req.user.employee_id);

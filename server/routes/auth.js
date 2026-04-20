@@ -2,7 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { get, run, all } = require('../db');
-const { auth } = require('../auth/middleware');
+const { auth, getDeptEmployeeIds } = require('../auth/middleware');
 
 const router = express.Router();
 
@@ -43,7 +43,7 @@ function generateToken() {
 
 // POST /register 注册
 router.post('/register', (req, res) => {
-  const { username, password, employee_id, role } = req.body;
+  const { username, password, email, employee_id, role } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: '用户名和密码不能为空' });
   }
@@ -69,7 +69,7 @@ router.post('/register', (req, res) => {
   if (!finalRole) {
     finalRole = isFirst ? 'admin' : 'employee';
   }
-  if (!['admin', 'employee'].includes(finalRole)) {
+  if (!['admin', 'employee', 'dept_leader'].includes(finalRole)) {
     return res.status(400).json({ error: '无效的角色' });
   }
 
@@ -79,16 +79,27 @@ router.post('/register', (req, res) => {
   // 如果没指定 employee_id，就用 username 作为名字创建一个空的 employee 记录
   if (!empId) {
     const empResult = run(
-      'INSERT INTO employees (name, role, group_name) VALUES (?, ?, ?)',
-      [username.trim(), '', '']
+      'INSERT INTO employees (name, role, group_name, email) VALUES (?, ?, ?, ?)',
+      [username.trim(), '', '', email || '']
     );
     empId = empResult.lastInsertRowid;
+  } else if (email) {
+    // 关联已有员工时，更新其邮箱
+    run('UPDATE employees SET email = ? WHERE id = ?', [email, empId]);
   }
 
   const result = run(
     'INSERT INTO users (username, password_hash, role, employee_id) VALUES (?, ?, ?, ?)',
     [username.trim(), password_hash, finalRole, empId]
   );
+
+  // 注册为 dept_leader → 同步部门负责人
+  if (finalRole === 'dept_leader' && empId) {
+    const emp = get('SELECT department_id FROM employees WHERE id = ?', [empId]);
+    if (emp && emp.department_id) {
+      run('UPDATE departments SET leader_employee_id = ? WHERE id = ?', [empId, emp.department_id]);
+    }
+  }
 
   // 生成 session（注册成功后直接登录）
   const token = generateToken();
@@ -158,9 +169,21 @@ router.post('/logout', auth, (req, res) => {
 // GET /me 获取当前用户信息
 router.get('/me', auth, (req, res) => {
   const user = get(
-    'SELECT u.id, u.username, u.role, u.employee_id, e.name as employee_name FROM users u LEFT JOIN employees e ON u.employee_id = e.id WHERE u.id = ?',
+    `SELECT u.id, u.username, u.role, u.employee_id, e.name as employee_name, e.department_id, d.name as department_name
+     FROM users u
+     LEFT JOIN employees e ON u.employee_id = e.id
+     LEFT JOIN departments d ON e.department_id = d.id
+     WHERE u.id = ?`,
     [req.user.id]
   );
+  // For dept_leader, also include the department they lead
+  if (user && user.role === 'dept_leader' && user.employee_id) {
+    const dept = get('SELECT id, name FROM departments WHERE leader_employee_id = ?', [user.employee_id]);
+    if (dept) {
+      user.leader_department_id = dept.id;
+      user.leader_department_name = dept.name;
+    }
+  }
   res.json(user);
 });
 
@@ -170,7 +193,7 @@ router.get('/users', auth, (req, res) => {
     return res.status(403).json({ error: '权限不足' });
   }
   const users = all(
-    'SELECT u.id, u.username, u.role, u.employee_id, e.name as employee_name FROM users u LEFT JOIN employees e ON u.employee_id = e.id ORDER BY u.id'
+    'SELECT u.id, u.username, u.role, u.employee_id, u.specialty, u.description, e.name as employee_name, e.email FROM users u LEFT JOIN employees e ON u.employee_id = e.id ORDER BY u.id'
   );
   res.json({ users });
 });
@@ -181,11 +204,30 @@ router.put('/users/:id/role', auth, (req, res) => {
     return res.status(403).json({ error: '权限不足' });
   }
   const { role } = req.body;
-  if (!['admin', 'employee'].includes(role)) {
+  if (!['admin', 'employee', 'dept_leader'].includes(role)) {
     return res.status(400).json({ error: '无效的角色' });
   }
   const { id } = req.params;
+
+  // 角色从 dept_leader 改为其他 → 清除部门负责人
+  const oldUser = get('SELECT role, employee_id FROM users WHERE id = ?', [id]);
+  if (oldUser && oldUser.role === 'dept_leader' && role !== 'dept_leader' && oldUser.employee_id) {
+    run('UPDATE departments SET leader_employee_id = NULL WHERE leader_employee_id = ?', [oldUser.employee_id]);
+  }
+
   run('UPDATE users SET role = ? WHERE id = ?', [role, id]);
+
+  // 角色改为 dept_leader → 同步部门负责人
+  if (role === 'dept_leader') {
+    const user = get('SELECT employee_id FROM users WHERE id = ?', [id]);
+    if (user && user.employee_id) {
+      const emp = get('SELECT department_id FROM employees WHERE id = ?', [user.employee_id]);
+      if (emp && emp.department_id) {
+        run('UPDATE departments SET leader_employee_id = ? WHERE id = ?', [user.employee_id, emp.department_id]);
+      }
+    }
+  }
+
   res.json({ ok: true });
 });
 
@@ -204,6 +246,23 @@ router.delete('/users/:id', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// PUT /users/:id/reset-password 重置用户密码（管理员用）
+router.put('/users/:id/reset-password', auth, (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: '权限不足' });
+  }
+  const { id } = req.params;
+  const user = get('SELECT id FROM users WHERE id = ?', [Number(id)]);
+  if (!user) return res.status(404).json({ error: '用户不存在' });
+
+  const newPassword = '123456';
+  const newHash = hashPassword(newPassword);
+  run('UPDATE users SET password_hash = ? WHERE id = ?', [newHash, Number(id)]);
+  // 清除该用户所有 session，强制重新登录
+  run('DELETE FROM sessions WHERE user_id = ?', [Number(id)]);
+  res.json({ ok: true, default_password: newPassword });
+});
+
 // PUT /users/:id/username 修改用户名（管理员用）
 router.put('/users/:id/username', auth, (req, res) => {
   if (req.user.role !== 'admin') {
@@ -218,6 +277,55 @@ router.put('/users/:id/username', auth, (req, res) => {
     return res.status(409).json({ error: '用户名已被占用' });
   }
   run('UPDATE users SET username = ? WHERE id = ?', [username.trim(), Number(req.params.id)]);
+  res.json({ ok: true });
+});
+
+// PUT /users/:id 编辑用户账号（管理员用）
+router.put('/users/:id', auth, (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: '权限不足' });
+  }
+  const { username, email, role, specialty, description } = req.body;
+  const userId = Number(req.params.id);
+  const user = get('SELECT * FROM users WHERE id = ?', [userId]);
+  if (!user) return res.status(404).json({ error: '用户不存在' });
+
+  // 更新用户名
+  if (username && username.trim().length >= 2) {
+    const existing = get('SELECT id FROM users WHERE username = ? AND id != ?', [username.trim(), userId]);
+    if (existing) return res.status(409).json({ error: '用户名已被占用' });
+    run('UPDATE users SET username = ? WHERE id = ?', [username.trim(), userId]);
+  }
+
+  // 更新角色
+  if (role && ['admin', 'employee', 'dept_leader'].includes(role) && role !== user.role) {
+    // 旧角色为 dept_leader → 清除部门负责人
+    if (user.role === 'dept_leader' && user.employee_id) {
+      run('UPDATE departments SET leader_employee_id = NULL WHERE leader_employee_id = ?', [user.employee_id]);
+    }
+    run('UPDATE users SET role = ? WHERE id = ?', [role, userId]);
+    // 新角色为 dept_leader → 同步部门负责人
+    if (role === 'dept_leader' && user.employee_id) {
+      const emp = get('SELECT department_id FROM employees WHERE id = ?', [user.employee_id]);
+      if (emp && emp.department_id) {
+        run('UPDATE departments SET leader_employee_id = ? WHERE id = ?', [user.employee_id, emp.department_id]);
+      }
+    }
+  }
+
+  // 更新关联员工的邮箱
+  if (email !== undefined && user.employee_id) {
+    run('UPDATE employees SET email = ? WHERE id = ?', [email || '', user.employee_id]);
+  }
+
+  // 更新专业和描述
+  if (specialty !== undefined) {
+    run('UPDATE users SET specialty = ? WHERE id = ?', [specialty || '', userId]);
+  }
+  if (description !== undefined) {
+    run('UPDATE users SET description = ? WHERE id = ?', [description || '', userId]);
+  }
+
   res.json({ ok: true });
 });
 
@@ -287,11 +395,26 @@ router.get('/me/stats', auth, (req, res) => {
 
   const myTasks = all(`SELECT t.id, t.objective_id, t.title, t.status, t.priority, t.deadline, t.completed_at, t.confirm_status, t.confirm_note FROM tasks t WHERE t.assignee_id = ? ORDER BY t.objective_id, t.id DESC`, [empId]);
 
-  // 获取员工的目标（带KR树）
+  // 获取员工的个人目标（带KR树）
   const myObjectives = all('SELECT * FROM objectives WHERE employee_id = ? ORDER BY id', [empId]);
   for (const obj of myObjectives) {
     obj.key_results = myTasks.filter(t => t.objective_id === obj.id);
+    if (obj.parent_objective_id) {
+      const parent = get('SELECT title FROM objectives WHERE id = ?', [obj.parent_objective_id]);
+      if (parent) obj.parent_title = parent.title;
+    }
   }
+
+  // 加载该员工参与的整体目标（有KR分配给自己的）
+  const globalObjs = all(`
+    SELECT DISTINCT o.* FROM objectives o
+    INNER JOIN tasks t ON t.objective_id = o.id AND t.assignee_id = ?
+    WHERE o.scope = 'global' AND o.approval_status = 'approved'
+  `, [empId]);
+  for (const obj of globalObjs) {
+    obj.key_results = myTasks.filter(t => t.objective_id === obj.id);
+  }
+  const allMyObjectives = [...globalObjs, ...myObjectives];
   const completedTasks = myTasks.filter(t => t.status === 'completed').length;
   const inProgressTasks = myTasks.filter(t => t.status === 'in_progress').length;
   const pendingTasks = myTasks.filter(t => t.status === 'pending').length;
@@ -316,7 +439,26 @@ router.get('/me/stats', auth, (req, res) => {
     t.status === 'overdue' || (t.status !== 'completed' && t.deadline && t.deadline < new Date().toISOString().slice(0, 10))
   ).slice(0, 10);
 
-  res.json({ weeklyHours, totalTasks: myTasks.length, inProgressTasks, completedTasks, overdueTasks, pendingTasks, myTasks, myObjectives, overdueList, weekStart });
+  const result = { weeklyHours, totalTasks: myTasks.length, inProgressTasks, completedTasks, overdueTasks, pendingTasks, myTasks, myObjectives: allMyObjectives, overdueList, weekStart };
+
+  // dept_leader: add department stats
+  if (req.user.role === 'dept_leader') {
+    const dept = get('SELECT id, name FROM departments WHERE leader_employee_id = ?', [empId]);
+    if (dept) {
+      const deptEmpIds = getDeptEmployeeIds(dept.id);
+      result.department_name = dept.name;
+      result.department_member_count = deptEmpIds.length;
+      if (deptEmpIds.length > 0) {
+        const ph = deptEmpIds.map(() => '?').join(',');
+        const deptTaskStats = get(`SELECT COUNT(*) as total, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as completed, SUM(CASE WHEN confirm_status='pending' THEN 1 ELSE 0 END) as pending_review FROM tasks WHERE assignee_id IN (${ph})`, deptEmpIds);
+        result.dept_total_tasks = deptTaskStats.total || 0;
+        result.dept_completed_tasks = deptTaskStats.completed || 0;
+        result.dept_pending_reviews = deptTaskStats.pending_review || 0;
+      }
+    }
+  }
+
+  res.json(result);
 });
 
 module.exports = router;

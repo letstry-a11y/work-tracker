@@ -1,4 +1,4 @@
-const { get } = require('../db');
+const { get, all } = require('../db');
 
 /**
  * 登录校验中间件
@@ -24,6 +24,13 @@ function auth(req, res, next) {
     role: session.role,
     employee_id: session.employee_id,
   };
+
+  // For dept_leader, inject department_id
+  if (session.role === 'dept_leader' && session.employee_id) {
+    const dept = get('SELECT id FROM departments WHERE leader_employee_id = ?', [session.employee_id]);
+    req.user.department_id = dept ? dept.id : null;
+  }
+
   next();
 }
 
@@ -38,4 +45,24 @@ function adminOnly(req, res, next) {
   }
 }
 
-module.exports = { auth, adminOnly };
+/**
+ * 部门负责人或管理员权限中间件
+ */
+function deptLeaderOrAdmin(req, res, next) {
+  if (req.user && (req.user.role === 'admin' || req.user.role === 'dept_leader')) {
+    next();
+  } else {
+    res.status(403).json({ error: '权限不足，需要管理员或部门负责人身份' });
+  }
+}
+
+/**
+ * 获取某部门下所有员工ID列表
+ */
+function getDeptEmployeeIds(departmentId) {
+  if (!departmentId) return [];
+  const rows = all('SELECT id FROM employees WHERE department_id = ?', [departmentId]);
+  return rows.map(r => r.id);
+}
+
+module.exports = { auth, adminOnly, deptLeaderOrAdmin, getDeptEmployeeIds };

@@ -10,9 +10,9 @@ async function start() {
 
   const app = express();
 
-  // CORS - restrict origin
+  // CORS - allow LAN access
   app.use(cors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: true,
     credentials: true
   }));
 
@@ -48,11 +48,13 @@ async function start() {
   app.use('/api/auth', require('./routes/auth'));
 
   // API routes (protected - require auth)
+  app.use('/api/departments',   auth, require('./routes/departments'));
   app.use('/api/employees',     auth, require('./routes/employees'));
   app.use('/api/tasks',        auth, require('./routes/tasks'));
   app.use('/api/daily-logs',   auth, require('./routes/dailyLogs'));
   app.use('/api/dashboard',    auth, require('./routes/dashboard'));
   app.use('/api/objectives',    auth, require('./routes/objectives'));
+  app.use('/api/projects',      auth, require('./routes/projects'));
   app.use('/api/deliverables',  auth, require('./routes/deliverables'));
   app.use('/api/weekly-scores',  auth, require('./routes/weeklyScores'));
   app.use('/api/reviews',        auth, require('./routes/reviews'));
@@ -81,7 +83,20 @@ async function start() {
     res.status(500).json({ error: '服务器内部错误' });
   });
 
-  // Periodic session cleanup: every hour, remove expired sessions
+  // Auto-mark overdue tasks: tasks past deadline that are not completed
+  function markOverdueTasks() {
+    try {
+      const result = run("UPDATE tasks SET status = 'overdue' WHERE status IN ('pending', 'in_progress') AND deadline IS NOT NULL AND deadline < date('now','localtime')");
+      if (result.changes > 0) {
+        console.log(`已标记 ${result.changes} 个逾期任务`);
+      }
+    } catch (e) {
+      console.error('逾期标记失败:', e);
+    }
+  }
+  markOverdueTasks(); // Run on startup
+
+  // Periodic cleanup: every hour
   setInterval(() => {
     try {
       const result = run("DELETE FROM sessions WHERE expires_at < datetime('now')");
@@ -91,11 +106,12 @@ async function start() {
     } catch (e) {
       console.error('Session 清理失败:', e);
     }
+    markOverdueTasks();
   }, 60 * 60 * 1000);
 
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
-    console.log(`工作追踪系统已启动: http://localhost:${PORT}`);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`畅视OKR管理系统已启动: http://localhost:${PORT}`);
   });
 }
 

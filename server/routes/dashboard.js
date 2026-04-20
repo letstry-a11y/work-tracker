@@ -1,10 +1,27 @@
 const express = require('express');
 const router = express.Router();
 const { all, get } = require('../db');
-const { adminOnly } = require('../auth/middleware');
+const { deptLeaderOrAdmin, getDeptEmployeeIds } = require('../auth/middleware');
 
-// GET /api/dashboard - Fix 3.5: Use aggregated queries instead of N+1
-router.get('/', adminOnly, (req, res) => {
+// GET /api/dashboard
+router.get('/', deptLeaderOrAdmin, (req, res) => {
+  const isDeptLeader = req.user.role === 'dept_leader' && req.user.department_id;
+  // Admin can pass department_id to filter by department
+  const filterDeptId = isDeptLeader ? req.user.department_id
+    : (req.user.role === 'admin' && req.query.department_id ? Number(req.query.department_id) : null);
+  let empFilter = '';
+  let empFilterParams = [];
+
+  if (filterDeptId) {
+    const deptEmpIds = getDeptEmployeeIds(filterDeptId);
+    if (deptEmpIds.length > 0) {
+      empFilter = ` WHERE assignee_id IN (${deptEmpIds.map(() => '?').join(',')})`;
+      empFilterParams = [...deptEmpIds];
+    } else {
+      empFilter = ' WHERE 1=0';
+    }
+  }
+
   // Aggregated task stats in a single query
   const taskStats = get(`
     SELECT
@@ -13,8 +30,8 @@ router.get('/', adminOnly, (req, res) => {
       SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as inProgressTasks,
       SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pendingTasks,
       SUM(CASE WHEN status = 'overdue' THEN 1 ELSE 0 END) as overdueTasks
-    FROM tasks
-  `);
+    FROM tasks ${empFilter}
+  `, empFilterParams);
 
   const totalTasks = taskStats.totalTasks || 0;
   const completedTasks = taskStats.completedTasks || 0;
@@ -24,50 +41,141 @@ router.get('/', adminOnly, (req, res) => {
   const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
   // Objective progress with LEFT JOIN + GROUP BY instead of N+1
-  const objectivesWithProgress = all(`
+  let objSql = `
     SELECT o.*, e.name as employee_name,
       COUNT(t.id) as kr_count,
       SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) as kr_completed
     FROM objectives o
     LEFT JOIN employees e ON o.employee_id = e.id
     LEFT JOIN tasks t ON t.objective_id = o.id
-    GROUP BY o.id
-    ORDER BY o.id
-  `);
+    WHERE o.approval_status = 'approved'
+  `;
+  const objParams = [];
+  if (filterDeptId) {
+    const deptEmpIds = getDeptEmployeeIds(filterDeptId);
+    if (deptEmpIds.length > 0) {
+      const ph = deptEmpIds.map(() => '?').join(',');
+      objSql += ` AND (o.employee_id IN (${ph}) OR o.scope = 'global')`;
+      objParams.push(...deptEmpIds);
+    } else {
+      objSql += ` AND o.scope = 'global'`;
+    }
+  }
+  objSql += ' GROUP BY o.id ORDER BY o.scope ASC, o.id';
+  const objectivesWithProgress = all(objSql, objParams);
+
+  // Compute progress including child objectives for global objectives
+  const globalObjIds = objectivesWithProgress.filter(o => o.scope === 'global').map(o => o.id);
+  let childStatsMap = {};
+  if (globalObjIds.length > 0) {
+    const gph = globalObjIds.map(() => '?').join(',');
+    // For each child objective, check if all its KRs are completed
+    const childObjs = all(`SELECT o.id, o.parent_objective_id FROM objectives o WHERE o.parent_objective_id IN (${gph})`, globalObjIds);
+    const childIds = childObjs.map(c => c.id);
+    let childKrStats = {};
+    if (childIds.length > 0) {
+      const cph = childIds.map(() => '?').join(',');
+      const childKrRows = all(`SELECT objective_id, COUNT(*) as total, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as completed FROM tasks WHERE objective_id IN (${cph}) GROUP BY objective_id`, childIds);
+      for (const r of childKrRows) {
+        childKrStats[r.objective_id] = r;
+      }
+    }
+    // Aggregate per parent
+    for (const child of childObjs) {
+      const pid = child.parent_objective_id;
+      if (!childStatsMap[pid]) childStatsMap[pid] = { childCount: 0, childCompleted: 0 };
+      const krStat = childKrStats[child.id];
+      if (krStat && krStat.total > 0) {
+        childStatsMap[pid].childCount++;
+        if (krStat.completed === krStat.total) childStatsMap[pid].childCompleted++;
+      }
+    }
+  }
 
   for (const obj of objectivesWithProgress) {
-    obj.progress = obj.kr_count > 0 ? Math.round((obj.kr_completed / obj.kr_count) * 100) : 0;
+    if (obj.scope === 'global' && childStatsMap[obj.id]) {
+      const cs = childStatsMap[obj.id];
+      const totalItems = obj.kr_count + cs.childCount;
+      const completedItems = obj.kr_completed + cs.childCompleted;
+      obj.progress = totalItems > 0 ? Math.round(completedItems / totalItems * 100) : 0;
+    } else {
+      obj.progress = obj.kr_count > 0 ? Math.round((obj.kr_completed / obj.kr_count) * 100) : 0;
+    }
   }
 
   // 交付物统计
-  const totalDeliverables = get('SELECT COUNT(*) as count FROM deliverables').count;
-  const recentDeliverables = all(`
+  let delivSql, delivParams = [];
+  if (filterDeptId) {
+    const deptEmpIds = getDeptEmployeeIds(filterDeptId);
+    if (deptEmpIds.length > 0) {
+      const ph = deptEmpIds.map(() => '?').join(',');
+      delivSql = `SELECT COUNT(*) as count FROM deliverables WHERE employee_id IN (${ph})`;
+      delivParams = [...deptEmpIds];
+    } else {
+      delivSql = 'SELECT 0 as count';
+    }
+  } else {
+    delivSql = 'SELECT COUNT(*) as count FROM deliverables';
+  }
+  const totalDeliverables = get(delivSql, delivParams).count;
+
+  let recentDelivSql = `
     SELECT d.id, d.title, d.file_name, d.created_at, e.name as employee_name, t.title as task_title
     FROM deliverables d
     LEFT JOIN employees e ON d.employee_id = e.id
     LEFT JOIN tasks t ON d.task_id = t.id
-    ORDER BY d.created_at DESC
-    LIMIT 10
-  `);
+  `;
+  const recentDelivParams = [];
+  if (filterDeptId) {
+    const deptEmpIds = getDeptEmployeeIds(filterDeptId);
+    if (deptEmpIds.length > 0) {
+      recentDelivSql += ` WHERE d.employee_id IN (${deptEmpIds.map(() => '?').join(',')})`;
+      recentDelivParams.push(...deptEmpIds);
+    } else {
+      recentDelivSql += ' WHERE 1=0';
+    }
+  }
+  recentDelivSql += ' ORDER BY d.created_at DESC LIMIT 10';
+  const recentDeliverables = all(recentDelivSql, recentDelivParams);
 
   // 延期任务
-  const overdueList = all(`
+  let overdueSql = `
     SELECT t.*, e.name as assignee_name, o.title as objective_title
     FROM tasks t LEFT JOIN employees e ON t.assignee_id = e.id
     LEFT JOIN objectives o ON t.objective_id = o.id
-    WHERE t.status = 'overdue' OR (t.status IN ('pending','in_progress') AND t.deadline IS NOT NULL AND t.deadline < date('now','localtime'))
-    ORDER BY t.deadline
-    LIMIT 20
-  `);
+    WHERE (t.status = 'overdue' OR (t.status IN ('pending','in_progress') AND t.deadline IS NOT NULL AND t.deadline < date('now','localtime')))
+  `;
+  const overdueParams = [];
+  if (filterDeptId) {
+    const deptEmpIds = getDeptEmployeeIds(filterDeptId);
+    if (deptEmpIds.length > 0) {
+      overdueSql += ` AND t.assignee_id IN (${deptEmpIds.map(() => '?').join(',')})`;
+      overdueParams.push(...deptEmpIds);
+    } else {
+      overdueSql += ' AND 1=0';
+    }
+  }
+  overdueSql += ' ORDER BY t.deadline LIMIT 20';
+  const overdueList = all(overdueSql, overdueParams);
 
   // 待确认任务
-  const pendingConfirmList = all(`
+  let pendingConfirmSql = `
     SELECT t.*, e.name as assignee_name
     FROM tasks t LEFT JOIN employees e ON t.assignee_id = e.id
     WHERE t.confirm_status = 'pending'
-    ORDER BY t.id DESC
-    LIMIT 20
-  `);
+  `;
+  const pendingConfirmParams = [];
+  if (filterDeptId) {
+    const deptEmpIds = getDeptEmployeeIds(filterDeptId);
+    if (deptEmpIds.length > 0) {
+      pendingConfirmSql += ` AND t.assignee_id IN (${deptEmpIds.map(() => '?').join(',')})`;
+      pendingConfirmParams.push(...deptEmpIds);
+    } else {
+      pendingConfirmSql += ' AND 1=0';
+    }
+  }
+  pendingConfirmSql += ' ORDER BY t.id DESC LIMIT 20';
+  const pendingConfirmList = all(pendingConfirmSql, pendingConfirmParams);
 
   res.json({
     totalTasks,
@@ -85,8 +193,11 @@ router.get('/', adminOnly, (req, res) => {
 });
 
 // GET /api/dashboard/weekly-grid
-router.get('/weekly-grid', adminOnly, (req, res) => {
-  let { week_start } = req.query;
+router.get('/weekly-grid', deptLeaderOrAdmin, (req, res) => {
+  let { week_start, department_id } = req.query;
+  const isDeptLeader = req.user.role === 'dept_leader' && req.user.department_id;
+  const filterDeptId = isDeptLeader ? req.user.department_id
+    : (req.user.role === 'admin' && department_id ? Number(department_id) : null);
 
   if (!week_start) {
     const today = new Date();
@@ -107,7 +218,7 @@ router.get('/weekly-grid', adminOnly, (req, res) => {
     dayDates.push(d.toISOString().slice(0, 10));
   }
 
-  const rows = all(`
+  let logSql = `
     SELECT
       dl.employee_id,
       e.name         AS employee_name,
@@ -121,11 +232,36 @@ router.get('/weekly-grid', adminOnly, (req, res) => {
     LEFT JOIN employees e ON dl.employee_id = e.id
     LEFT JOIN tasks    t  ON dl.task_id      = t.id
     WHERE dl.date >= ? AND dl.date <= ?
-    ORDER BY dl.employee_id, dl.date
-  `, [week_start, weekEnd]);
+  `;
+  const logParams = [week_start, weekEnd];
+  if (filterDeptId) {
+    const deptEmpIds = getDeptEmployeeIds(filterDeptId);
+    if (deptEmpIds.length > 0) {
+      logSql += ` AND dl.employee_id IN (${deptEmpIds.map(() => '?').join(',')})`;
+      logParams.push(...deptEmpIds);
+    } else {
+      logSql += ' AND 1=0';
+    }
+  }
+  logSql += ' ORDER BY dl.employee_id, dl.date';
 
-  // Include ALL employees, not just those with logs
-  const allEmployees = all('SELECT id, name FROM employees ORDER BY id');
+  const rows = all(logSql, logParams);
+
+  // Include employees (filtered for dept_leader)
+  let empSql = 'SELECT id, name FROM employees';
+  const empParams = [];
+  if (filterDeptId) {
+    const deptEmpIds = getDeptEmployeeIds(filterDeptId);
+    if (deptEmpIds.length > 0) {
+      empSql += ` WHERE id IN (${deptEmpIds.map(() => '?').join(',')})`;
+      empParams.push(...deptEmpIds);
+    } else {
+      empSql += ' WHERE 1=0';
+    }
+  }
+  empSql += ' ORDER BY id';
+  const allEmployees = all(empSql, empParams);
+
   const empMap = {};
   for (const emp of allEmployees) {
     empMap[emp.id] = {

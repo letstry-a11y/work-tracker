@@ -1,0 +1,10 @@
+node_modules
+server/node_modules
+server/uploads
+server/work-tracker.db
+server/work-tracker.db.backup.*
+docker-data
+.git
+.gitignore
+.claude
+*.md
